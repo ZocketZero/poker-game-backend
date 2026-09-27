@@ -34,3 +34,4 @@ thiserror = "2"
 
 # Game engine
 poker_engine = { path = "../poker-engine" }
+actix-cors = "0.7.2"

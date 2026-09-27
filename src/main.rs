@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use actix_web::{App, HttpResponse, HttpServer, web};
+use actix_cors::Cors;
+use actix_web::{App, HttpResponse, HttpServer, http, web};
 use tokio::sync::RwLock;
 
 use poker_backend::config::Config;
@@ -44,7 +45,19 @@ async fn main() -> std::io::Result<()> {
     };
 
     HttpServer::new(move || {
+        let cors = Cors::default()
+            .allowed_origin("http://localhost:3000")
+            .allowed_methods(vec!["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+            .allowed_headers(vec![
+                http::header::AUTHORIZATION,
+                http::header::ACCEPT,
+                http::header::CONTENT_TYPE,
+            ])
+            .supports_credentials() // Omit if using send_wildcard()
+            .max_age(3600);
+
         App::new()
+            .wrap(cors)
             .app_data(web::Data::new(app_state.clone()))
             // Health check
             .route("/health", web::get().to(health))
