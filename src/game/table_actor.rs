@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 
 use crate::db::models::{HandHistoryDoc, HandPlayer};
 use crate::db::repository;
-use crate::game::messages::{GameMode, SeatInfo, ServerMessage};
+use crate::game::messages::{GameMode, SeatInfo, ServerMessage, SidePotInfo};
 
 /// A connected player at a table.
 #[derive(Debug, Clone)]
@@ -466,20 +466,50 @@ impl GameTable {
 
         let board: Vec<String> = self.engine.board.iter().map(|c| c.to_string()).collect();
 
+        // Build side-pot breakdown: eligible = players still in the hand (Active or AllIn).
+        let eligible: std::collections::HashSet<usize> = self
+            .engine
+            .seats
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, p)| p.as_ref().filter(|p| p.is_in_hand()).map(|_| idx))
+            .collect();
+        let raw_pots = self.engine.pot_manager.calculate_pots(&eligible);
+        let side_pots: Vec<SidePotInfo> = raw_pots
+            .into_iter()
+            .map(|pot| {
+                let mut eligible_seats: Vec<usize> = pot.eligible_players.into_iter().collect();
+                eligible_seats.sort_unstable();
+                SidePotInfo {
+                    amount: pot.amount,
+                    eligible_seats,
+                }
+            })
+            .collect();
+
         ServerMessage::TableState {
             table_id: self.id.clone(),
             seats,
             stage: format!("{:?}", self.engine.stage),
             board,
             pot: self.engine.pot_manager.total_pot(),
+            side_pots,
             current_player: self.engine.current_player,
             game_mode: self.game_mode,
             is_started: self.is_started,
         }
     }
 
-    /// Number of connected players.
+    /// Number of connected players who have chips (used for lobby display).
+    /// Players with 0 chips who are still seated (e.g. waiting for elimination) are excluded.
     pub fn player_count(&self) -> usize {
-        self.players.len()
+        self.players
+            .iter()
+            .filter(|&(&seat, _)| {
+                self.engine
+                    .player(seat)
+                    .map_or(false, |p| p.chips > 0)
+            })
+            .count()
     }
 }

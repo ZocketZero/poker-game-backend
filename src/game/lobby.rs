@@ -214,13 +214,20 @@ impl Lobby {
     }
 
     /// Start a hand at a table.
-    pub async fn start_hand(&self, table_id: &str) -> Result<(), String> {
+    /// `user_id` must belong to a player already seated at the table.
+    pub async fn start_hand(&self, table_id: &str, user_id: &str) -> Result<(), String> {
         let table_lock = self
             .tables
             .get(table_id)
             .ok_or_else(|| format!("Table '{}' not found", table_id))?;
 
         let mut table = table_lock.write().await;
+
+        // Only a seated player may trigger the hand start.
+        table
+            .find_seat_by_user(user_id)
+            .ok_or_else(|| "You must be seated at the table to start a hand".to_string())?;
+
         table.start_hand()
     }
 

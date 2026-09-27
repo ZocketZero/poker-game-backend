@@ -276,7 +276,7 @@ async fn handle_client_message(
 
         ClientMessage::StartHand { table_id } => {
             let lobby = state.lobby.read().await;
-            lobby.start_hand(&table_id).await?;
+            lobby.start_hand(&table_id, user_id).await?;
         }
 
         ClientMessage::PlayerAction { table_id, action } => {

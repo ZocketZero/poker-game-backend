@@ -170,6 +170,9 @@ pub enum ServerMessage {
         stage: String,
         board: Vec<String>,
         pot: u64,
+        /// Individual pots (main + side pots). Always at least one entry when a hand is running.
+        /// Clients should display these so all-in players can see their eligible winnings.
+        side_pots: Vec<SidePotInfo>,
         current_player: Option<usize>,
         game_mode: GameMode,
         is_started: bool,
@@ -204,4 +207,13 @@ pub struct SeatInfo {
     pub chips: Option<u64>,
     pub status: Option<String>,
     pub current_bet: Option<u64>,
+}
+
+/// One pot entry in the side-pot breakdown sent with `TableState`.
+#[derive(Debug, Clone, Serialize)]
+pub struct SidePotInfo {
+    /// Total chips in this pot.
+    pub amount: u64,
+    /// Seat indices eligible to win this pot (i.e. have not folded and contributed enough).
+    pub eligible_seats: Vec<usize>,
 }
