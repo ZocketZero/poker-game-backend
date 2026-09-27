@@ -1,0 +1,558 @@
+# Texas Hold'em Poker Backend — Full System & API Reference for AI Agents
+
+> This single-file reference contains the complete, authoritative documentation of the Texas Hold'em Poker backend service for AI models, LLMs, and autonomous agents.
+
+---
+
+## 1. System Architecture
+
+The poker backend is an asynchronous, high-concurrency Texas Hold'em service written in Rust with Tokio and Actix-web.
+
+```
+                      ┌──────────────────────────────────────────┐
+                      │              Client / AI Agent           │
+                      └─────────────────┬────────────────────────┘
+                                        │
+                       HTTP (Auth)      │       WebSocket (Gameplay)
+                       /api/auth/*      │       /ws?token=<JWT>
+                                        ▼
+                      ┌──────────────────────────────────────────┐
+                      │           Actix-web HTTP Layer           │
+                      └─────────────────┬────────────────────────┘
+                                        │
+                                        ▼
+                      ┌──────────────────────────────────────────┐
+                      │       Lobby Actor (Table Registry)       │
+                      └───────┬──────────────────────────┬───────┘
+                              │                          │
+                              ▼                          ▼
+               ┌──────────────────────────┐   ┌──────────────────────────┐
+               │    Table Actor (Cash)    │   │  Table Actor (Tournament)│
+               │  - PreFlop -> River      │   │  - Locked registration   │
+               │  - Pot & Side Pots       │   │  - Player eliminations   │
+               │  - Inactive Fold Timeout │   │  - Winner prize payout   │
+               └──────────────┬───────────┘   └──────────┬───────────────┘
+                              │                          │
+                              └───────────┬──────────────┘
+                                          │
+                                          ▼
+                      ┌──────────────────────────────────────────┐
+                      │           MongoDB Persistence            │
+                      │   - `users`: balances, credentials       │
+                      │   - `hand_histories`: audited hands      │
+                      └──────────────────────────────────────────┘
+```
+
+### Server Endpoints
+- **HTTP Base URL**: `http://127.0.0.1:8080` (or configured host/port)
+- **WebSocket URL**: `ws://127.0.0.1:8080/ws?token=<JWT_TOKEN>`
+
+---
+
+## 2. HTTP REST API Specification
+
+### 2.1 Health Check
+- **Endpoint**: `GET /health`
+- **Authentication**: None
+- **Response**: `200 OK`
+  ```json
+  {
+    "status": "ok"
+  }
+  ```
+
+### 2.2 User Registration
+- **Endpoint**: `POST /api/auth/register`
+- **Headers**: `Content-Type: application/json`
+- **Request Body**:
+  ```json
+  {
+    "username": "agent_alpha",
+    "password": "secure_password_123"
+  }
+  ```
+- **Validation**:
+  - `username`: String, min 3 characters, max 32 characters, unique.
+  - `password`: String, min 6 characters.
+- **Success Response**: `200 OK`
+  ```json
+  {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "user": {
+      "id": "65b9e1234567890abcdef123",
+      "username": "agent_alpha",
+      "chips": 1000,
+      "created_at": "2026-09-28T00:00:00Z"
+    }
+  }
+  ```
+- **Error Responses**:
+  - `400 Bad Request`: `{"error": "Username already exists"}`
+  - `400 Bad Request`: `{"error": "Username must be at least 3 characters"}`
+
+### 2.3 User Login
+- **Endpoint**: `POST /api/auth/login`
+- **Headers**: `Content-Type: application/json`
+- **Request Body**:
+  ```json
+  {
+    "username": "agent_alpha",
+    "password": "secure_password_123"
+  }
+  ```
+- **Success Response**: `200 OK`
+  ```json
+  {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "user": {
+      "id": "65b9e1234567890abcdef123",
+      "username": "agent_alpha",
+      "chips": 1000,
+      "created_at": "2026-09-28T00:00:00Z"
+    }
+  }
+  ```
+- **Error Responses**:
+  - `401 Unauthorized`: `{"error": "Invalid username or password"}`
+
+---
+
+## 3. WebSocket Protocol & Connection Lifecycle
+
+### 3.1 Connection Handshake
+Clients connect to `/ws` with the JWT token passed as a query string parameter:
+```
+ws://127.0.0.1:8080/ws?token=<JWT_TOKEN>
+```
+If the token is missing, expired, or invalid, the server immediately terminates the connection with WebSocket close code `4001` or `1008` (Policy Violation).
+
+### 3.2 Heartbeat & Ping/Pong
+- The server sends WebSocket Ping frames every **10 seconds**.
+- The client must respond with a Pong frame within **30 seconds** of inactivity, or the connection is dropped.
+- Standard client libraries (e.g. `websockets` in Python, browser WebSocket API) handle Ping/Pong automatically.
+
+### 3.3 Message Envelope Structure
+All WebSocket frames are text frames containing UTF-8 JSON. Every message has a top-level `"type"` string determining its schema.
+
+---
+
+## 4. Client-to-Server Messages
+
+Clients emit messages serialized as JSON objects.
+
+### 4.1 `ListTables`
+Queries active tables in the lobby.
+```json
+{
+  "type": "ListTables"
+}
+```
+
+### 4.2 `CreateTable` (Cash Game)
+Creates a standard cash table.
+```json
+{
+  "type": "CreateTable",
+  "name": "High Rollers",
+  "small_blind": 10,
+  "big_blind": 20,
+  "min_buy_in": 400,
+  "max_buy_in": 2000,
+  "max_players": 6
+}
+```
+- Constraints:
+  - `name`: String, 1–32 characters.
+  - `small_blind`: Integer > 0.
+  - `big_blind`: Integer >= `2 * small_blind`.
+  - `min_buy_in`: Integer >= `big_blind`.
+  - `max_buy_in`: Integer >= `min_buy_in`.
+  - `max_players`: Integer between 2 and 9.
+
+### 4.3 `CreateTournament`
+Creates a tournament table with equal starting chips and late registration lock.
+```json
+{
+  "type": "CreateTournament",
+  "name": "Friday Deepstack",
+  "small_blind": 25,
+  "big_blind": 50,
+  "buy_in": 500,
+  "starting_chips": 5000,
+  "max_players": 9,
+  "min_players": 3
+}
+```
+- Constraints:
+  - `buy_in`: Cost deducted from player's balance to enter. Contributes to tournament prize pool.
+  - `starting_chips`: Exact stack allocated to every participant.
+  - `min_players`: Minimum seats occupied before `StartHand` can begin.
+
+### 4.4 `JoinTable`
+Joins an existing table.
+```json
+{
+  "type": "JoinTable",
+  "table_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "buy_in": 1000
+}
+```
+- Notes:
+  - For tournaments, `buy_in` must be >= configured tournament `buy_in`.
+  - In tournaments, once the game has started (`is_started == true`), late registration is strictly locked; attempting to join returns an Error message.
+
+### 4.5 `LeaveTable`
+Leaves a table. If a hand is in progress, the player's active cards are folded and chips currently in the pot remain forfeited. Remaining uncommitted chips return to the player balance.
+```json
+{
+  "type": "LeaveTable",
+  "table_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+}
+```
+
+### 4.6 `StartHand`
+Manually starts the hand if the table has sufficient players (at least 2 players, or at least `min_players` for tournaments) and is not already running.
+```json
+{
+  "type": "StartHand",
+  "table_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+}
+```
+
+### 4.7 `PlayerAction`
+Performs an action when it is the agent's turn.
+```json
+{
+  "type": "PlayerAction",
+  "table_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "action": {
+    "action": "Raise",
+    "amount": 120
+  }
+}
+```
+
+Available `action` variants:
+- Fold: `{"action": "Fold"}`
+- Check: `{"action": "Check"}`
+- Call: `{"action": "Call"}`
+- Bet: `{"action": "Bet", "amount": 50}`
+- Raise: `{"action": "Raise", "amount": 150}`
+- AllIn: `{"action": "AllIn"}`
+
+---
+
+## 5. Server-to-Client Messages
+
+The server streams real-time updates to all connected or seated players.
+
+### 5.1 `TableList`
+Sent in response to `ListTables`.
+```json
+{
+  "type": "TableList",
+  "tables": [
+    {
+      "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+      "name": "Standard Cash #1",
+      "player_count": 4,
+      "max_players": 6,
+      "small_blind": 5,
+      "big_blind": 10,
+      "min_buy_in": 200,
+      "max_buy_in": 1000,
+      "is_tournament": false,
+      "is_started": false
+    }
+  ]
+}
+```
+
+### 5.2 `JoinedTable`
+Sent directly to a player confirming successful entry.
+```json
+{
+  "type": "JoinedTable",
+  "table_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "seat": 2
+}
+```
+
+### 5.3 `TableState`
+Full snapshot of the table state broadcast on state transitions.
+```json
+{
+  "type": "TableState",
+  "table_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "name": "Standard Cash #1",
+  "phase": "Flop",
+  "pot": 180,
+  "community_cards": [
+    {"suit": "Hearts", "rank": "Ace"},
+    {"suit": "Spades", "rank": "King"},
+    {"suit": "Diamonds", "rank": "Two"}
+  ],
+  "current_player": "65b9e1234567890abcdef123",
+  "dealer_seat": 0,
+  "small_blind": 5,
+  "big_blind": 10,
+  "is_tournament": false,
+  "is_started": true,
+  "seats": [
+    {
+      "seat_index": 0,
+      "user_id": "65b9e1234567890abcdef111",
+      "username": "alice",
+      "chips": 450,
+      "current_bet": 0,
+      "is_active": true,
+      "has_folded": false,
+      "is_all_in": false
+    },
+    {
+      "seat_index": 1,
+      "user_id": "65b9e1234567890abcdef123",
+      "username": "agent_alpha",
+      "chips": 980,
+      "current_bet": 0,
+      "is_active": true,
+      "has_folded": false,
+      "is_all_in": false
+    }
+  ]
+}
+```
+- `phase` values: `"Waiting"`, `"PreFlop"`, `"Flop"`, `"Turn"`, `"River"`, `"Showdown"`.
+- `suit` values: `"Hearts"`, `"Diamonds"`, `"Clubs"`, `"Spades"`.
+- `rank` values: `"Two"`, `"Three"`, `"Four"`, `"Five"`, `"Six"`, `"Seven"`, `"Eight"`, `"Nine"`, `"Ten"`, `"Jack"`, `"Queen"`, `"King"`, `"Ace"`.
+
+### 5.4 `HoleCards`
+Sent privately to the player at hand start.
+```json
+{
+  "type": "HoleCards",
+  "table_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "cards": [
+    {"suit": "Hearts", "rank": "Ace"},
+    {"suit": "Spades", "rank": "Ace"}
+  ]
+}
+```
+
+### 5.5 `YourTurn`
+Critical turn prompt sent exclusively to the active player.
+```json
+{
+  "type": "YourTurn",
+  "table_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "legal_actions": {
+    "can_fold": true,
+    "can_check": false,
+    "can_call": true,
+    "call_amount": 20,
+    "can_bet": false,
+    "min_bet": 0,
+    "max_bet": 0,
+    "can_raise": true,
+    "min_raise": 60,
+    "max_raise": 980,
+    "can_all_in": true,
+    "all_in_cost": 980
+  }
+}
+```
+
+### 5.6 `GameEvent`
+Broadcast when any player acts or a hand phase advances.
+```json
+{
+  "type": "GameEvent",
+  "table_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "event": {
+    "type": "ActionTaken",
+    "player_id": "65b9e1234567890abcdef111",
+    "action": {"action": "Call"}
+  }
+}
+```
+
+Event types include:
+- `{"type": "ActionTaken", "player_id": "...", "action": {...}}`
+- `{"type": "PhaseChanged", "phase": "Flop", "community_cards": [...]}`
+- `{"type": "Winners", "winners": [{"player_id": "...", "amount": 200, "hand": "Full House"}]}`
+- `{"type": "HandEnded"}`
+
+### 5.7 `PlayerJoined` and `PlayerLeft`
+```json
+{
+  "type": "PlayerJoined",
+  "table_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "user_id": "65b9e1234567890abcdef222",
+  "username": "bob",
+  "seat": 3
+}
+```
+```json
+{
+  "type": "PlayerLeft",
+  "table_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "user_id": "65b9e1234567890abcdef222"
+}
+```
+
+### 5.8 `PlayerEliminated` (Tournament Only)
+Broadcast when a player loses all their chips in a tournament.
+```json
+{
+  "type": "PlayerEliminated",
+  "table_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "user_id": "65b9e1234567890abcdef111",
+  "username": "alice"
+}
+```
+
+### 5.9 `TournamentEnded` (Tournament Only)
+Broadcast when the tournament concludes with a single surviving champion.
+```json
+{
+  "type": "TournamentEnded",
+  "table_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "winner_id": "65b9e1234567890abcdef123",
+  "winner_username": "agent_alpha",
+  "prize_pool": 1500
+}
+```
+
+### 5.10 `Error`
+Sent when an action or request is rejected.
+```json
+{
+  "type": "Error",
+  "message": "It is not your turn"
+}
+```
+
+---
+
+## 6. Action Formulation Rules for AI Models
+
+To ensure 100% compliant, zero-error gameplay, agents MUST strictly construct actions based on `legal_actions`:
+
+| Desired Move | Condition Requirement | Payload to Send |
+| :--- | :--- | :--- |
+| **Fold** | `legal_actions.can_fold == true` | `{"type": "PlayerAction", "table_id": "<id>", "action": {"action": "Fold"}}` |
+| **Check** | `legal_actions.can_check == true` | `{"type": "PlayerAction", "table_id": "<id>", "action": {"action": "Check"}}` |
+| **Call** | `legal_actions.can_call == true` | `{"type": "PlayerAction", "table_id": "<id>", "action": {"action": "Call"}}` |
+| **Bet** | `legal_actions.can_bet == true` | `{"type": "PlayerAction", "table_id": "<id>", "action": {"action": "Bet", "amount": X}}` where `min_bet <= X <= max_bet` |
+| **Raise** | `legal_actions.can_raise == true` | `{"type": "PlayerAction", "table_id": "<id>", "action": {"action": "Raise", "amount": X}}` where `min_raise <= X <= max_raise` |
+| **All-In** | `legal_actions.can_all_in == true` | `{"type": "PlayerAction", "table_id": "<id>", "action": {"action": "AllIn"}}` |
+
+### Critical Numerical Rule: Cumulative Raise
+In Texas Hold'em and this server, `Raise.amount` represents the **total cumulative bet** for the current betting round, NOT the increment.
+- Example: Player A bet 20. The current highest bet is 20.
+- If `min_raise` is 40 and `max_raise` is 500, a raise to 60 must specify `"amount": 60` (NOT 40).
+
+---
+
+## 7. Python Async AI Agent Template
+
+```python
+import asyncio
+import json
+import httpx
+import websockets
+
+BASE_HTTP = "http://127.0.0.1:8080"
+BASE_WS = "ws://127.0.0.1:8080/ws"
+
+async def run_poker_agent(username: str, password: str):
+    # 1. Authenticate via HTTP
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(f"{BASE_HTTP}/api/auth/login", json={
+            "username": username,
+            "password": password
+        })
+        if resp.status_code != 200:
+            # Fallback to register
+            resp = await client.post(f"{BASE_HTTP}/api/auth/register", json={
+                "username": username,
+                "password": password
+            })
+        data = resp.json()
+        token = data["token"]
+        user_id = data["user"]["id"]
+        print(f"Authenticated as {username} (ID: {user_id})")
+
+    # 2. Connect to WebSocket
+    ws_url = f"{BASE_WS}?token={token}"
+    async with websockets.connect(ws_url) as ws:
+        # Query tables
+        await ws.send(json.dumps({"type": "ListTables"}))
+
+        current_table_id = None
+        my_hole_cards = []
+
+        async for message in ws:
+            event = json.loads(message)
+            msg_type = event.get("type")
+
+            if msg_type == "TableList":
+                tables = event.get("tables", [])
+                if tables and not current_table_id:
+                    target = tables[0]
+                    current_table_id = target["id"]
+                    print(f"Joining table {target['name']} ({current_table_id})")
+                    buy_in = target["min_buy_in"] if not target["is_tournament"] else target.get("buy_in", 500)
+                    await ws.send(json.dumps({
+                        "type": "JoinTable",
+                        "table_id": current_table_id,
+                        "buy_in": buy_in
+                    }))
+
+            elif msg_type == "JoinedTable":
+                print(f"Successfully seated at table {event['table_id']} seat {event['seat']}")
+                # Attempt to trigger hand start if waiting
+                await ws.send(json.dumps({
+                    "type": "StartHand",
+                    "table_id": current_table_id
+                }))
+
+            elif msg_type == "HoleCards":
+                my_hole_cards = event.get("cards", [])
+                print(f"Hole cards dealt: {my_hole_cards}")
+
+            elif msg_type == "YourTurn":
+                legal = event.get("legal_actions", {})
+                table_id = event.get("table_id")
+                print(f"Your turn! Legal options: {legal}")
+
+                # Safe fallback policy:
+                # 1. If can check for free -> Check
+                # 2. If can call cheaply (<= 20) -> Call
+                # 3. Otherwise -> Fold
+                if legal.get("can_check"):
+                    action = {"action": "Check"}
+                elif legal.get("can_call") and legal.get("call_amount", 9999) <= 20:
+                    action = {"action": "Call"}
+                elif legal.get("can_fold"):
+                    action = {"action": "Fold"}
+                else:
+                    action = {"action": "Check"}
+
+                await ws.send(json.dumps({
+                    "type": "PlayerAction",
+                    "table_id": table_id,
+                    "action": action
+                }))
+                print(f"Sent action: {action}")
+
+            elif msg_type == "TournamentEnded":
+                print(f"Tournament ended! Winner: {event.get('winner_username')} Prize: {event.get('prize_pool')}")
+                break
+
+            elif msg_type == "Error":
+                print(f"Received Server Error: {event.get('message')}")
+
+if __name__ == "__main__":
+    asyncio.run(run_poker_agent("agent_alpha", "password123"))
+```

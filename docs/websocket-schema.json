@@ -1,0 +1,331 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PokerBackendWebSocketProtocol",
+  "description": "JSON Schemas for all WebSocket Client and Server Messages",
+  "definitions": {
+    "GameMode": {
+      "type": "string",
+      "enum": ["Cash", "Tournament", "cash", "tournament"]
+    },
+    "ClientMessage": {
+      "oneOf": [
+        { "$ref": "#/definitions/ClientListTables" },
+        { "$ref": "#/definitions/ClientCreateTable" },
+        { "$ref": "#/definitions/ClientCreateTournament" },
+        { "$ref": "#/definitions/ClientJoinTable" },
+        { "$ref": "#/definitions/ClientLeaveTable" },
+        { "$ref": "#/definitions/ClientStartHand" },
+        { "$ref": "#/definitions/ClientPlayerAction" }
+      ]
+    },
+    "ClientListTables": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "ListTables" }
+      },
+      "additionalProperties": false
+    },
+    "ClientCreateTable": {
+      "type": "object",
+      "required": ["type", "small_blind", "big_blind"],
+      "properties": {
+        "type": { "const": "CreateTable" },
+        "small_blind": { "type": "integer", "minimum": 1 },
+        "big_blind": { "type": "integer", "minimum": 1 },
+        "ante": { "type": "integer", "minimum": 0, "default": 0 },
+        "max_players": { "type": "integer", "minimum": 2, "maximum": 10, "default": 6 },
+        "game_mode": { "$ref": "#/definitions/GameMode", "default": "Cash" },
+        "starting_chips": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "ClientCreateTournament": {
+      "type": "object",
+      "required": ["type", "small_blind", "big_blind", "starting_chips"],
+      "properties": {
+        "type": { "const": "CreateTournament" },
+        "small_blind": { "type": "integer", "minimum": 1 },
+        "big_blind": { "type": "integer", "minimum": 1 },
+        "ante": { "type": "integer", "minimum": 0, "default": 0 },
+        "max_players": { "type": "integer", "minimum": 2, "maximum": 10, "default": 6 },
+        "starting_chips": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "ClientJoinTable": {
+      "type": "object",
+      "required": ["type", "table_id", "seat", "buy_in"],
+      "properties": {
+        "type": { "const": "JoinTable" },
+        "table_id": { "type": "string" },
+        "seat": { "type": "integer", "minimum": 0, "maximum": 9 },
+        "buy_in": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "ClientLeaveTable": {
+      "type": "object",
+      "required": ["type", "table_id"],
+      "properties": {
+        "type": { "const": "LeaveTable" },
+        "table_id": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "ClientStartHand": {
+      "type": "object",
+      "required": ["type", "table_id"],
+      "properties": {
+        "type": { "const": "StartHand" },
+        "table_id": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "ClientPlayerAction": {
+      "type": "object",
+      "required": ["type", "table_id", "action"],
+      "properties": {
+        "type": { "const": "PlayerAction" },
+        "table_id": { "type": "string" },
+        "action": { "$ref": "#/definitions/ActionPayload" }
+      },
+      "additionalProperties": false
+    },
+    "ActionPayload": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["action"],
+          "properties": { "action": { "const": "Fold" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["action"],
+          "properties": { "action": { "const": "Check" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["action"],
+          "properties": { "action": { "const": "Call" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["action", "amount"],
+          "properties": {
+            "action": { "const": "Bet" },
+            "amount": { "type": "integer", "minimum": 1 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["action", "amount"],
+          "properties": {
+            "action": { "const": "Raise" },
+            "amount": { "type": "integer", "minimum": 1 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["action"],
+          "properties": { "action": { "const": "AllIn" } },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ServerMessage": {
+      "oneOf": [
+        { "$ref": "#/definitions/ServerTableList" },
+        { "$ref": "#/definitions/ServerJoinedTable" },
+        { "$ref": "#/definitions/ServerTableState" },
+        { "$ref": "#/definitions/ServerPlayerJoined" },
+        { "$ref": "#/definitions/ServerPlayerLeft" },
+        { "$ref": "#/definitions/ServerPlayerEliminated" },
+        { "$ref": "#/definitions/ServerTournamentEnded" },
+        { "$ref": "#/definitions/ServerHoleCards" },
+        { "$ref": "#/definitions/ServerYourTurn" },
+        { "$ref": "#/definitions/ServerGameEvent" },
+        { "$ref": "#/definitions/ServerError" }
+      ]
+    },
+    "ServerTableList": {
+      "type": "object",
+      "required": ["type", "tables"],
+      "properties": {
+        "type": { "const": "TableList" },
+        "tables": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/TableInfo" }
+        }
+      }
+    },
+    "TableInfo": {
+      "type": "object",
+      "required": ["id", "name", "player_count", "max_players", "small_blind", "big_blind", "stage", "game_mode", "is_started"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "player_count": { "type": "integer" },
+        "max_players": { "type": "integer" },
+        "small_blind": { "type": "integer" },
+        "big_blind": { "type": "integer" },
+        "stage": { "type": "string" },
+        "game_mode": { "$ref": "#/definitions/GameMode" },
+        "is_started": { "type": "boolean" },
+        "starting_chips": { "type": ["integer", "null"] }
+      }
+    },
+    "ServerJoinedTable": {
+      "type": "object",
+      "required": ["type", "table_id", "seat"],
+      "properties": {
+        "type": { "const": "JoinedTable" },
+        "table_id": { "type": "string" },
+        "seat": { "type": "integer" }
+      }
+    },
+    "ServerTableState": {
+      "type": "object",
+      "required": ["type", "table_id", "seats", "stage", "board", "pot", "current_player", "game_mode", "is_started"],
+      "properties": {
+        "type": { "const": "TableState" },
+        "table_id": { "type": "string" },
+        "seats": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/SeatInfo" }
+        },
+        "stage": { "type": "string" },
+        "board": { "type": "array", "items": { "type": "string" } },
+        "pot": { "type": "integer" },
+        "current_player": { "type": ["integer", "null"] },
+        "game_mode": { "$ref": "#/definitions/GameMode" },
+        "is_started": { "type": "boolean" }
+      }
+    },
+    "SeatInfo": {
+      "type": "object",
+      "required": ["seat", "username", "chips", "status", "current_bet"],
+      "properties": {
+        "seat": { "type": "integer" },
+        "username": { "type": ["string", "null"] },
+        "chips": { "type": ["integer", "null"] },
+        "status": { "type": ["string", "null"] },
+        "current_bet": { "type": ["integer", "null"] }
+      }
+    },
+    "ServerPlayerJoined": {
+      "type": "object",
+      "required": ["type", "table_id", "seat", "username", "chips"],
+      "properties": {
+        "type": { "const": "PlayerJoined" },
+        "table_id": { "type": "string" },
+        "seat": { "type": "integer" },
+        "username": { "type": "string" },
+        "chips": { "type": "integer" }
+      }
+    },
+    "ServerPlayerLeft": {
+      "type": "object",
+      "required": ["type", "table_id", "seat", "username"],
+      "properties": {
+        "type": { "const": "PlayerLeft" },
+        "table_id": { "type": "string" },
+        "seat": { "type": "integer" },
+        "username": { "type": "string" }
+      }
+    },
+    "ServerPlayerEliminated": {
+      "type": "object",
+      "required": ["type", "table_id", "seat", "username", "rank"],
+      "properties": {
+        "type": { "const": "PlayerEliminated" },
+        "table_id": { "type": "string" },
+        "seat": { "type": "integer" },
+        "username": { "type": "string" },
+        "rank": { "type": "integer", "description": "Finishing placement (e.g. 2 for 2nd place)" }
+      }
+    },
+    "ServerTournamentEnded": {
+      "type": "object",
+      "required": ["type", "table_id", "winner_username", "prize"],
+      "properties": {
+        "type": { "const": "TournamentEnded" },
+        "table_id": { "type": "string" },
+        "winner_username": { "type": "string" },
+        "prize": { "type": "integer", "description": "Total prize pool awarded to the winner" }
+      }
+    },
+    "ServerHoleCards": {
+      "type": "object",
+      "required": ["type", "table_id", "cards"],
+      "properties": {
+        "type": { "const": "HoleCards" },
+        "table_id": { "type": "string" },
+        "cards": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "type": "object",
+            "required": ["code"],
+            "properties": { "code": { "type": "integer" } }
+          }
+        }
+      }
+    },
+    "ServerYourTurn": {
+      "type": "object",
+      "required": ["type", "table_id", "legal_actions"],
+      "properties": {
+        "type": { "const": "YourTurn" },
+        "table_id": { "type": "string" },
+        "legal_actions": { "$ref": "#/definitions/LegalActions" }
+      }
+    },
+    "LegalActions": {
+      "type": "object",
+      "required": [
+        "can_fold", "can_check", "can_call", "call_amount",
+        "can_bet", "min_bet", "max_bet",
+        "can_raise", "min_raise", "max_raise",
+        "can_all_in", "all_in_cost"
+      ],
+      "properties": {
+        "can_fold": { "type": "boolean" },
+        "can_check": { "type": "boolean" },
+        "can_call": { "type": "boolean" },
+        "call_amount": { "type": "integer" },
+        "can_bet": { "type": "boolean" },
+        "min_bet": { "type": "integer" },
+        "max_bet": { "type": "integer" },
+        "can_raise": { "type": "boolean" },
+        "min_raise": { "type": "integer" },
+        "max_raise": { "type": "integer" },
+        "can_all_in": { "type": "boolean" },
+        "all_in_cost": { "type": "integer" }
+      }
+    },
+    "ServerGameEvent": {
+      "type": "object",
+      "required": ["type", "table_id", "event"],
+      "properties": {
+        "type": { "const": "GameEvent" },
+        "table_id": { "type": "string" },
+        "event": { "type": "object" }
+      }
+    },
+    "ServerError": {
+      "type": "object",
+      "required": ["type", "message"],
+      "properties": {
+        "type": { "const": "Error" },
+        "message": { "type": "string" }
+      }
+    }
+  }
+}

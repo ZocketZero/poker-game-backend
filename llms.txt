@@ -1,0 +1,37 @@
+# Texas Hold'em Poker Backend API Documentation
+
+> Production-grade asynchronous Texas Hold'em Poker engine and real-time multiplayer server built with Rust, Actix-web, Tokio actors, and MongoDB. Supports both standard Cash Games and Tournament Mode (equal starting chips, late registration lock, player eliminations, and prize distribution).
+
+This file provides entry points and navigation for AI models, LLMs, and autonomous agents interacting with or developing against the Poker Backend.
+
+## Primary Machine-Readable Specifications
+
+- [Full Consolidated LLM Reference](file:///home/zero/Desktop/projects/rust/poker-backend/llms-full.txt): Complete, all-in-one API documentation, data models, message payloads, and game invariants in a single machine-readable document.
+- [OpenAPI 3.1.0 Specification](file:///home/zero/Desktop/projects/rust/poker-backend/docs/openapi.json): Formal machine-readable HTTP REST API spec covering registration, login, JWT authentication, and WebSocket upgrade endpoint.
+- [WebSocket Protocol JSON Schema](file:///home/zero/Desktop/projects/rust/poker-backend/docs/websocket-schema.json): Comprehensive JSON Schema (Draft 2020-12) defining all client-to-server and server-to-client JSON frames.
+- [AI Agent Integration Guide](file:///home/zero/Desktop/projects/rust/poker-backend/docs/ai-client-guide.md): Practical guide for autonomous AI agents covering connection lifecycle, turn invariants, legal action construction, tournament mechanics, and reference Python implementation.
+
+## Human & Developer Documentation (GitHub Wiki)
+
+- [Wiki Home](file:///home/zero/Desktop/projects/rust/poker-backend/wiki/Home.md): High-level system architecture, actor model overview, and quickstart.
+- [REST API Reference](file:///home/zero/Desktop/projects/rust/poker-backend/wiki/REST-API.md): Detailed HTTP endpoint documentation, request/response bodies, error formats, and curl examples.
+- [WebSocket Protocol Overview](file:///home/zero/Desktop/projects/rust/poker-backend/wiki/WebSocket-Protocol.md): Handshake, framing, heartbeat/ping-pong, connection state machine.
+- [Client Messages Reference](file:///home/zero/Desktop/projects/rust/poker-backend/wiki/WebSocket-Client-Messages.md): Complete schema and examples for messages sent by clients to the server.
+- [Server Messages Reference](file:///home/zero/Desktop/projects/rust/poker-backend/wiki/WebSocket-Server-Messages.md): Complete schema and examples for broadcasts, game state, events, and turn notifications.
+- [Game Flow and Rules](file:///home/zero/Desktop/projects/rust/poker-backend/wiki/Game-Flow-and-Rules.md): Hand lifecycle, blind posting, betting rounds (PreFlop to Showdown), pot splitting, and side pots.
+- [Database & Persistence](file:///home/zero/Desktop/projects/rust/poker-backend/wiki/Database-and-Persistence.md): MongoDB collections (`users`, `hand_histories`), atomic balance synchronization, and hand auditing.
+
+## Key System Concepts for Autonomous Agents
+
+1. **Authentication Flow**:
+   - Register (`POST /api/auth/register`) or Login (`POST /api/auth/login`).
+   - Extract JWT token string from response: `{"token": "<jwt>", "user": {"id": "...", "chips": 1000}}`.
+   - Connect WebSocket with query parameter: `ws://<host>:<port>/ws?token=<jwt>`.
+
+2. **Game Formats**:
+   - **Cash Game**: Configured with `small_blind`, `big_blind`, `min_buy_in`, `max_buy_in`. Players can join/leave anytime with custom chip buy-ins deducted from their account.
+   - **Tournament**: Configured with `is_tournament: true`, `buy_in`, `starting_chips`, `min_players`. All players receive identical `starting_chips`. The table locks against late registrations once `StartHand` is triggered. Eliminated players receive `PlayerEliminated` broadcast, and the last remaining player receives the prize pool via `TournamentEnded`.
+
+3. **Strict Decision Constraints**:
+   - Always formulate actions using the exact booleans and numerical bounds in the server's `YourTurn.legal_actions` message (`can_check`, `can_call`, `call_amount`, `can_bet`, `min_bet`, `max_bet`, `can_raise`, `min_raise`, `max_raise`, `can_all_in`).
+   - In `Raise`, `amount` represents the cumulative bet amount for the round, not the incremental raise.
