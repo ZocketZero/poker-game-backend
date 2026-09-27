@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 
 use crate::db::models::{HandHistoryDoc, HandPlayer};
 use crate::db::repository;
-use crate::game::messages::{SeatInfo, ServerMessage};
+use crate::game::messages::{GameMode, SeatInfo, ServerMessage};
 
 /// A connected player at a table.
 #[derive(Debug, Clone)]
@@ -25,7 +25,7 @@ pub struct CurrentHand {
     pub events: Vec<serde_json::Value>,
 }
 
-/// Wraps `poker_engine::Table` with connected player tracking and message broadcasting.
+/// Wraps `poker_engine::Table` with connected player tracking, tournament management, and message broadcasting.
 pub struct GameTable {
     pub id: String,
     pub name: String,
@@ -34,10 +34,21 @@ pub struct GameTable {
     pub players: HashMap<usize, ConnectedPlayer>,
     pub db: Option<Database>,
     pub current_hand: Option<CurrentHand>,
+    pub game_mode: GameMode,
+    pub starting_chips: u64,
+    pub is_started: bool,
+    pub prize_pool: u64,
 }
 
 impl GameTable {
-    pub fn new(id: String, name: String, config: TableConfig, db: Option<Database>) -> Self {
+    pub fn new(
+        id: String,
+        name: String,
+        config: TableConfig,
+        db: Option<Database>,
+        game_mode: GameMode,
+        starting_chips: u64,
+    ) -> Self {
         Self {
             id,
             name,
@@ -45,10 +56,15 @@ impl GameTable {
             players: HashMap::new(),
             db,
             current_hand: None,
+            game_mode,
+            starting_chips,
+            is_started: false,
+            prize_pool: 0,
         }
     }
 
     /// Sit a player at the table and connect their WebSocket sender.
+    /// In tournament mode, validates that the game hasn't started and assigns equal starting chips.
     pub fn sit_player(
         &mut self,
         seat: usize,
@@ -56,7 +72,7 @@ impl GameTable {
         username: String,
         buy_in: u64,
         sender: mpsc::UnboundedSender<ServerMessage>,
-    ) -> Result<(), String> {
+    ) -> Result<u64, String> {
         if seat >= self.engine.config.max_players {
             return Err(format!(
                 "Seat {} is out of table bounds (max {})",
@@ -64,12 +80,25 @@ impl GameTable {
             ));
         }
 
+        // In tournament mode, new players cannot join after the game has begun
+        if self.game_mode == GameMode::Tournament && self.is_started {
+            let is_reconnecting = self
+                .players
+                .get(&seat)
+                .map_or(false, |p| p.user_id == user_id && p.sender.is_closed());
+
+            if !is_reconnecting {
+                return Err("Cannot join room: tournament has already started".to_string());
+            }
+        }
+
         // Check if this seat already has a player
         if let Some(existing) = self.players.get_mut(&seat) {
             // If the same user is reconnecting with a closed sender, reattach
             if existing.user_id == user_id && existing.sender.is_closed() {
                 existing.sender = sender;
-                return Ok(());
+                let chips = self.engine.player(seat).map_or(0, |p| p.chips);
+                return Ok(chips);
             }
             return Err(format!("Seat {} is already occupied", seat));
         }
@@ -78,8 +107,19 @@ impl GameTable {
             return Err(format!("Seat {} is already occupied", seat));
         }
 
-        let player = Player::new(seat, &username, buy_in);
+        // In tournament mode, every player starts with the exact same starting chips
+        let chips_assigned = if self.game_mode == GameMode::Tournament {
+            self.starting_chips
+        } else {
+            buy_in
+        };
+
+        let player = Player::new(seat, &username, chips_assigned);
         self.engine.sit_player(seat, player)?;
+
+        if self.game_mode == GameMode::Tournament {
+            self.prize_pool += chips_assigned;
+        }
 
         self.players.insert(
             seat,
@@ -90,7 +130,7 @@ impl GameTable {
             },
         );
 
-        Ok(())
+        Ok(chips_assigned)
     }
 
     /// Remove a player from the table and return their connection info and remaining chips.
@@ -105,8 +145,30 @@ impl GameTable {
     }
 
     /// Process a player's request to leave their seat.
-    /// If currently in an active hand, folds if it's their turn; otherwise errors.
+    /// In tournament mode before game start, unregisters with full refund.
+    /// In tournament mode after game start, forfeits (0 refund).
     pub fn leave_seat(&mut self, seat: usize) -> Result<(Option<ConnectedPlayer>, u64), String> {
+        if self.game_mode == GameMode::Tournament {
+            if !self.is_started {
+                // Unregister before tournament starts: refund starting chips
+                self.prize_pool = self.prize_pool.saturating_sub(self.starting_chips);
+                let (connected, _) = self.remove_player(seat);
+                return Ok((connected, self.starting_chips));
+            } else {
+                // Tournament already running: forfeit (0 cash refund)
+                if self.engine.stage != poker_engine::events::Stage::HandEnded
+                    && self.engine.player(seat).is_some_and(|p| p.is_in_hand())
+                {
+                    if self.engine.current_player == Some(seat) {
+                        let _ = self.apply_action(Action::Fold);
+                    }
+                }
+                let (connected, _) = self.remove_player(seat);
+                return Ok((connected, 0));
+            }
+        }
+
+        // Cash game leave logic
         if self.engine.stage != poker_engine::events::Stage::HandEnded
             && self.engine.player(seat).is_some_and(|p| p.is_in_hand())
         {
@@ -128,7 +190,15 @@ impl GameTable {
     }
 
     /// Start a new hand and broadcast all resulting events.
+    /// Marks the tournament as started so no new players can join.
     pub fn start_hand(&mut self) -> Result<(), String> {
+        if self.game_mode == GameMode::Tournament {
+            if self.player_count() < 2 {
+                return Err("At least 2 players are required to start a tournament".to_string());
+            }
+            self.is_started = true;
+        }
+
         let starting_players: Vec<HandPlayer> = self
             .players
             .iter()
@@ -163,7 +233,6 @@ impl GameTable {
     }
 
     /// Drain engine events and dispatch them to connected players.
-    /// Also records hand history and auto-folds/checks disconnected players.
     fn broadcast_events(&mut self) {
         let events: Vec<GameEvent> = self.engine.events.drain(..).collect();
         let mut auto_actions = Vec::new();
@@ -242,7 +311,8 @@ impl GameTable {
         }
     }
 
-    /// Complete current hand, persist history doc to DB, and clean up disconnected players.
+    /// Complete current hand, persist history doc to DB, handle tournament eliminations/winner,
+    /// and clean up disconnected players.
     fn finish_hand(&mut self) {
         if let Some(mut hand) = self.current_hand.take() {
             for p in &mut hand.starting_players {
@@ -266,7 +336,69 @@ impl GameTable {
             }
         }
 
-        // Remove disconnected players after hand finishes
+        // Tournament elimination & winner logic
+        if self.game_mode == GameMode::Tournament && self.is_started {
+            // Find players with 0 chips
+            let mut eliminated = Vec::new();
+            for (&seat, cp) in &self.players {
+                if let Some(engine_p) = self.engine.player(seat) {
+                    if engine_p.chips == 0 {
+                        eliminated.push((seat, cp.clone()));
+                    }
+                }
+            }
+
+            let remaining_after = self.players.len().saturating_sub(eliminated.len());
+            for (seat, cp) in eliminated {
+                let rank = remaining_after + 1;
+                self.remove_player(seat);
+
+                let elim_msg = ServerMessage::PlayerEliminated {
+                    table_id: self.id.clone(),
+                    seat,
+                    username: cp.username.clone(),
+                    rank,
+                };
+                for connected in self.players.values() {
+                    let _ = connected.sender.send(elim_msg.clone());
+                }
+                let _ = cp.sender.send(elim_msg);
+            }
+
+            // Check if tournament has a winner (only 1 player remains)
+            if self.players.len() == 1 {
+                let (&_winner_seat, winner) = self.players.iter().next().unwrap();
+                let prize = self.prize_pool;
+                let winner_username = winner.username.clone();
+
+                let ended_msg = ServerMessage::TournamentEnded {
+                    table_id: self.id.clone(),
+                    winner_username: winner_username.clone(),
+                    prize,
+                };
+                for connected in self.players.values() {
+                    let _ = connected.sender.send(ended_msg.clone());
+                }
+
+                if let Some(db) = &self.db {
+                    let db = db.clone();
+                    let uname = winner_username;
+                    tokio::spawn(async move {
+                        if let Ok(Some(u)) = repository::find_user_by_username(&db, &uname).await {
+                            let _ = repository::update_chips(
+                                &db,
+                                &uname,
+                                u.chips.saturating_add(prize),
+                            )
+                            .await;
+                        }
+                    });
+                }
+            }
+            return;
+        }
+
+        // Cash game: remove disconnected players after hand finishes and refund chips
         let disconnected_seats: Vec<usize> = self
             .players
             .iter()
@@ -341,6 +473,8 @@ impl GameTable {
             board,
             pot: self.engine.pot_manager.total_pot(),
             current_player: self.engine.current_player,
+            game_mode: self.game_mode,
+            is_started: self.is_started,
         }
     }
 

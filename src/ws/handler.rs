@@ -131,6 +131,8 @@ async fn handle_client_message(
             big_blind,
             ante,
             max_players,
+            game_mode,
+            starting_chips,
         } => {
             let config = TableConfig {
                 small_blind,
@@ -140,9 +142,36 @@ async fn handle_client_message(
             };
             let table_id = {
                 let mut lobby = state.lobby.write().await;
-                lobby.create_table(config)?
+                lobby.create_table(config, game_mode, starting_chips)?
             };
-            log::info!("Table {} created by {}", table_id, username);
+            log::info!("Table {} ({:?}) created by {}", table_id, game_mode, username);
+            let lobby = state.lobby.read().await;
+            let tables = lobby.list_tables().await;
+            let _ = tx.send(ServerMessage::TableList { tables });
+        }
+
+        ClientMessage::CreateTournament {
+            small_blind,
+            big_blind,
+            ante,
+            max_players,
+            starting_chips,
+        } => {
+            let config = TableConfig {
+                small_blind,
+                big_blind,
+                ante,
+                max_players,
+            };
+            let table_id = {
+                let mut lobby = state.lobby.write().await;
+                lobby.create_table(
+                    config,
+                    crate::game::messages::GameMode::Tournament,
+                    Some(starting_chips),
+                )?
+            };
+            log::info!("Tournament {} created by {}", table_id, username);
             let lobby = state.lobby.read().await;
             let tables = lobby.list_tables().await;
             let _ = tx.send(ServerMessage::TableList { tables });
@@ -153,7 +182,38 @@ async fn handle_client_message(
             seat,
             buy_in,
         } => {
-            if buy_in == 0 {
+            // Determine required chips and tournament start status
+            let (game_mode, is_started, required_chips) = {
+                let lobby = state.lobby.read().await;
+                let table_lock = lobby
+                    .get_table(&table_id)
+                    .ok_or_else(|| format!("Table '{}' not found", table_id))?;
+                let table = table_lock.read().await;
+                let required = if table.game_mode == crate::game::messages::GameMode::Tournament {
+                    table.starting_chips
+                } else {
+                    buy_in
+                };
+                (table.game_mode, table.is_started, required)
+            };
+
+            // In tournament mode, late registration is prohibited once the game has begun
+            if game_mode == crate::game::messages::GameMode::Tournament && is_started {
+                let is_seated = {
+                    let lobby = state.lobby.read().await;
+                    if let Some(table_lock) = lobby.get_table(&table_id) {
+                        let table = table_lock.read().await;
+                        table.find_seat_by_user(user_id) == Some(seat)
+                    } else {
+                        false
+                    }
+                };
+                if !is_seated {
+                    return Err("Cannot join room: tournament has already started".to_string());
+                }
+            }
+
+            if required_chips == 0 {
                 return Err("Buy-in must be greater than 0".to_string());
             }
 
@@ -163,15 +223,15 @@ async fn handle_client_message(
                 .map_err(|e| format!("Database error: {e}"))?
                 .ok_or_else(|| "User not found".to_string())?;
 
-            if user.chips < buy_in {
+            if user.chips < required_chips {
                 return Err(format!(
-                    "Insufficient chips: you have {}, buy-in requires {}",
-                    user.chips, buy_in
+                    "Insufficient chips: you have {}, required {}",
+                    user.chips, required_chips
                 ));
             }
 
-            // Deduct buy-in chips from database
-            let new_balance = user.chips - buy_in;
+            // Deduct required buy-in chips from database
+            let new_balance = user.chips - required_chips;
             repository::update_chips(&state.db, username, new_balance)
                 .await
                 .map_err(|e| format!("Database error: {e}"))?;

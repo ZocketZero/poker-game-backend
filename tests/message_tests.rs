@@ -1,4 +1,4 @@
-use poker_backend::game::messages::{ActionPayload, ClientMessage, ServerMessage, TableInfo};
+use poker_backend::game::messages::{ActionPayload, ClientMessage, GameMode, ServerMessage, TableInfo};
 use poker_engine::Action;
 
 #[test]
@@ -7,7 +7,7 @@ fn test_client_message_deserialization() {
     let msg: ClientMessage = serde_json::from_str(json_list).unwrap();
     assert!(matches!(msg, ClientMessage::ListTables));
 
-    let json_create = r#"{"type":"CreateTable","small_blind":10,"big_blind":20,"ante":5,"max_players":6}"#;
+    let json_create = r#"{"type":"CreateTable","small_blind":10,"big_blind":20,"ante":5,"max_players":6,"game_mode":"tournament","starting_chips":1500}"#;
     let msg: ClientMessage = serde_json::from_str(json_create).unwrap();
     match msg {
         ClientMessage::CreateTable {
@@ -15,13 +15,36 @@ fn test_client_message_deserialization() {
             big_blind,
             ante,
             max_players,
+            game_mode,
+            starting_chips,
         } => {
             assert_eq!(small_blind, 10);
             assert_eq!(big_blind, 20);
             assert_eq!(ante, 5);
             assert_eq!(max_players, 6);
+            assert_eq!(game_mode, GameMode::Tournament);
+            assert_eq!(starting_chips, Some(1500));
         }
         _ => panic!("Expected CreateTable"),
+    }
+
+    let json_create_tourney = r#"{"type":"CreateTournament","small_blind":10,"big_blind":20,"ante":0,"max_players":6,"starting_chips":2000}"#;
+    let msg: ClientMessage = serde_json::from_str(json_create_tourney).unwrap();
+    match msg {
+        ClientMessage::CreateTournament {
+            small_blind,
+            big_blind,
+            ante,
+            max_players,
+            starting_chips,
+        } => {
+            assert_eq!(small_blind, 10);
+            assert_eq!(big_blind, 20);
+            assert_eq!(ante, 0);
+            assert_eq!(max_players, 6);
+            assert_eq!(starting_chips, 2000);
+        }
+        _ => panic!("Expected CreateTournament"),
     }
 
     let json_join = r#"{"type":"JoinTable","table_id":"tbl-1","seat":2,"buy_in":1000}"#;
@@ -86,9 +109,32 @@ fn test_server_message_serialization() {
             small_blind: 10,
             big_blind: 20,
             stage: "PreFlop".to_string(),
+            game_mode: GameMode::Tournament,
+            is_started: false,
+            starting_chips: Some(1000),
         }],
     };
     let json = serde_json::to_string(&msg).unwrap();
     assert!(json.contains(r#""type":"TableList""#));
     assert!(json.contains(r#""player_count":2"#));
+    assert!(json.contains(r#""game_mode":"Tournament""#));
+
+    let msg_elim = ServerMessage::PlayerEliminated {
+        table_id: "t1".to_string(),
+        seat: 2,
+        username: "dave".to_string(),
+        rank: 3,
+    };
+    let json_elim = serde_json::to_string(&msg_elim).unwrap();
+    assert!(json_elim.contains(r#""type":"PlayerEliminated""#));
+    assert!(json_elim.contains(r#""rank":3"#));
+
+    let msg_end = ServerMessage::TournamentEnded {
+        table_id: "t1".to_string(),
+        winner_username: "alice".to_string(),
+        prize: 3000,
+    };
+    let json_end = serde_json::to_string(&msg_end).unwrap();
+    assert!(json_end.contains(r#""type":"TournamentEnded""#));
+    assert!(json_end.contains(r#""prize":3000"#));
 }

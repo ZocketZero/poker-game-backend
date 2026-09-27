@@ -6,7 +6,7 @@ use poker_engine::table::TableConfig;
 use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
 
-use crate::game::messages::{ServerMessage, TableInfo};
+use crate::game::messages::{GameMode, ServerMessage, TableInfo};
 use crate::game::table_actor::GameTable;
 
 /// Manages all active tables and player sessions.
@@ -24,8 +24,13 @@ impl Lobby {
         }
     }
 
-    /// Create a new table and return its ID.
-    pub fn create_table(&mut self, config: TableConfig) -> Result<String, String> {
+    /// Create a new table or tournament room and return its ID.
+    pub fn create_table(
+        &mut self,
+        config: TableConfig,
+        game_mode: GameMode,
+        starting_chips: Option<u64>,
+    ) -> Result<String, String> {
         if config.max_players < 2 || config.max_players > 10 {
             return Err("max_players must be between 2 and 10".to_string());
         }
@@ -36,12 +41,28 @@ impl Lobby {
             return Err("small_blind cannot be greater than big_blind".to_string());
         }
 
+        let starting_chips = starting_chips.unwrap_or(1000);
+        if starting_chips == 0 {
+            return Err("starting_chips must be greater than 0".to_string());
+        }
+
         let table_id = Uuid::new_v4().to_string();
-        let table_name = format!("Table-{}", &table_id[..8]);
-        let game_table = GameTable::new(table_id.clone(), table_name, config, self.db.clone());
+        let prefix = match game_mode {
+            GameMode::Cash => "Table",
+            GameMode::Tournament => "Tournament",
+        };
+        let table_name = format!("{}-{}", prefix, &table_id[..8]);
+        let game_table = GameTable::new(
+            table_id.clone(),
+            table_name,
+            config,
+            self.db.clone(),
+            game_mode,
+            starting_chips,
+        );
         self.tables
             .insert(table_id.clone(), Arc::new(RwLock::new(game_table)));
-        log::info!("Created table {}", table_id);
+        log::info!("Created {:?} table {}", game_mode, table_id);
         Ok(table_id)
     }
 
@@ -58,6 +79,13 @@ impl Lobby {
                 small_blind: table.engine.config.small_blind,
                 big_blind: table.engine.config.big_blind,
                 stage: format!("{:?}", table.engine.stage),
+                game_mode: table.game_mode,
+                is_started: table.is_started,
+                starting_chips: if table.game_mode == GameMode::Tournament {
+                    Some(table.starting_chips)
+                } else {
+                    None
+                },
             });
         }
         infos
@@ -68,7 +96,7 @@ impl Lobby {
         self.tables.get(table_id).cloned()
     }
 
-    /// Join a player to a table.
+    /// Join a player to a table. Returns the number of chips actually required/charged.
     pub async fn join_table(
         &self,
         table_id: &str,
@@ -77,7 +105,7 @@ impl Lobby {
         username: String,
         buy_in: u64,
         sender: mpsc::UnboundedSender<ServerMessage>,
-    ) -> Result<(), String> {
+    ) -> Result<u64, String> {
         let table_lock = self
             .tables
             .get(table_id)
@@ -92,15 +120,15 @@ impl Lobby {
             }
         }
 
-        // Sit the player first to validate seat availability and bounds
-        table.sit_player(seat, user_id, username.clone(), buy_in, sender)?;
+        // Sit the player first to validate seat availability, bounds, and tournament start state
+        let actual_chips = table.sit_player(seat, user_id, username.clone(), buy_in, sender)?;
 
         // Notify other seated players of the new joiner
         let join_msg = ServerMessage::PlayerJoined {
             table_id: table_id.to_string(),
             seat,
             username,
-            chips: buy_in,
+            chips: actual_chips,
         };
         for (&s, connected) in &table.players {
             if s != seat {
@@ -108,7 +136,7 @@ impl Lobby {
             }
         }
 
-        Ok(())
+        Ok(actual_chips)
     }
 
     /// Remove a player from a table and return the chips they leave with.
@@ -152,16 +180,20 @@ impl Lobby {
         for (table_id, table_lock) in &self.tables {
             let mut table = table_lock.write().await;
             if let Some(seat) = table.find_seat_by_user(user_id) {
+                // In tournament mode, if tournament is running, do not remove player stack
+                // (they stay in tournament to be blinded out / auto-fold until eliminated).
+                if table.game_mode == GameMode::Tournament && table.is_started {
+                    continue;
+                }
+
                 let (removed, chips) = if table.engine.stage == poker_engine::events::Stage::HandEnded
                     || table.engine.player(seat).map_or(true, |p| !p.is_in_hand())
                 {
-                    table.remove_player(seat)
+                    table.leave_seat(seat).unwrap_or((None, 0))
                 } else if table.engine.current_player == Some(seat) {
                     let _ = table.apply_action(poker_engine::Action::Fold);
-                    table.remove_player(seat)
+                    table.leave_seat(seat).unwrap_or((None, 0))
                 } else {
-                    // Still in hand and not current turn; leave connection closed,
-                    // broadcast_events will auto-fold when turn arrives and refund after hand.
                     continue;
                 };
 

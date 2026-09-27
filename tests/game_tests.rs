@@ -1,4 +1,4 @@
-use poker_backend::game::messages::ServerMessage;
+use poker_backend::game::messages::{GameMode, ServerMessage};
 use poker_backend::game::table_actor::GameTable;
 use poker_engine::table::TableConfig;
 use poker_engine::Action;
@@ -15,7 +15,14 @@ fn test_config() -> TableConfig {
 
 #[tokio::test]
 async fn test_sit_and_remove_player() {
-    let mut table = GameTable::new("tbl-1".to_string(), "Table 1".to_string(), test_config(), None);
+    let mut table = GameTable::new(
+        "tbl-1".to_string(),
+        "Table 1".to_string(),
+        test_config(),
+        None,
+        GameMode::Cash,
+        1000,
+    );
     let (tx1, _rx1) = mpsc::unbounded_channel();
     let (tx2, _rx2) = mpsc::unbounded_channel();
 
@@ -43,7 +50,14 @@ async fn test_sit_and_remove_player() {
 
 #[tokio::test]
 async fn test_reconnect_reattaches_sender() {
-    let mut table = GameTable::new("tbl-1".to_string(), "Table 1".to_string(), test_config(), None);
+    let mut table = GameTable::new(
+        "tbl-1".to_string(),
+        "Table 1".to_string(),
+        test_config(),
+        None,
+        GameMode::Cash,
+        1000,
+    );
     let (tx1, rx1) = mpsc::unbounded_channel();
 
     table.sit_player(0, "u1".to_string(), "Alice".to_string(), 1000, tx1).unwrap();
@@ -59,7 +73,14 @@ async fn test_reconnect_reattaches_sender() {
 
 #[tokio::test]
 async fn test_no_duplicate_events_on_subsequent_actions() {
-    let mut table = GameTable::new("tbl-1".to_string(), "Table 1".to_string(), test_config(), None);
+    let mut table = GameTable::new(
+        "tbl-1".to_string(),
+        "Table 1".to_string(),
+        test_config(),
+        None,
+        GameMode::Cash,
+        1000,
+    );
     let (tx0, mut rx0) = mpsc::unbounded_channel();
     let (tx1, mut rx1) = mpsc::unbounded_channel();
 
@@ -87,7 +108,6 @@ async fn test_no_duplicate_events_on_subsequent_actions() {
     assert_eq!(hole_cards_count, 1, "Alice should receive HoleCards exactly once");
 
     // Alice makes an action
-    // In heads-up, button is small blind and acts first preflop (seat 0)
     let action = Action::Call;
     assert!(table.apply_action(action).is_ok());
 
@@ -125,7 +145,14 @@ async fn test_no_duplicate_events_on_subsequent_actions() {
 
 #[tokio::test]
 async fn test_hole_cards_are_private() {
-    let mut table = GameTable::new("tbl-1".to_string(), "Table 1".to_string(), test_config(), None);
+    let mut table = GameTable::new(
+        "tbl-1".to_string(),
+        "Table 1".to_string(),
+        test_config(),
+        None,
+        GameMode::Cash,
+        1000,
+    );
     let (tx0, mut rx0) = mpsc::unbounded_channel();
     let (tx1, mut rx1) = mpsc::unbounded_channel();
 
@@ -139,7 +166,6 @@ async fn test_hole_cards_are_private() {
         if let ServerMessage::HoleCards { .. } = msg {
             alice_got_hole = true;
         }
-        // Ensure no GameEvent broadcast has HoleCardsDealt
         if let ServerMessage::GameEvent { event, .. } = msg {
             assert!(event.get("HoleCardsDealt").is_none());
         }
@@ -160,7 +186,14 @@ async fn test_hole_cards_are_private() {
 
 #[tokio::test]
 async fn test_auto_fold_disconnected_player() {
-    let mut table = GameTable::new("tbl-1".to_string(), "Table 1".to_string(), test_config(), None);
+    let mut table = GameTable::new(
+        "tbl-1".to_string(),
+        "Table 1".to_string(),
+        test_config(),
+        None,
+        GameMode::Cash,
+        1000,
+    );
     let (tx0, rx0) = mpsc::unbounded_channel();
     let (tx1, _rx1) = mpsc::unbounded_channel();
 
@@ -170,18 +203,48 @@ async fn test_auto_fold_disconnected_player() {
     // Alice disconnects before hand starts
     drop(rx0);
 
-    // Hand starts: Alice is small blind / button in heads up and first to act preflop.
-    // Facing big blind, Alice cannot check, so auto-action should fold her!
     table.start_hand().unwrap();
 
-    // Hand should end because Alice auto-folded as a disconnected player!
     assert_eq!(
         table.engine.stage,
         poker_engine::events::Stage::HandEnded,
         "Alice should have auto-folded, ending the hand"
     );
 
-    // Bob should have won the pot
     let bob = table.engine.player(1).unwrap();
     assert!(bob.chips > 1000, "Bob should have won the pot");
+}
+
+#[tokio::test]
+async fn test_tournament_equal_starting_chips_and_elimination() {
+    let starting_stack = 2000;
+    let mut table = GameTable::new(
+        "tourney-1".to_string(),
+        "Tournament 1".to_string(),
+        test_config(),
+        None,
+        GameMode::Tournament,
+        starting_stack,
+    );
+
+    let (tx0, _rx0) = mpsc::unbounded_channel();
+    let (tx1, _rx1) = mpsc::unbounded_channel();
+    let (tx2, _rx2) = mpsc::unbounded_channel();
+
+    // Alice and Bob join with arbitrary requested buy_ins; in tournament mode they receive exact equal starting_chips
+    let chips_0 = table.sit_player(0, "u0".to_string(), "Alice".to_string(), 500, tx0).unwrap();
+    let chips_1 = table.sit_player(1, "u1".to_string(), "Bob".to_string(), 9999, tx1).unwrap();
+
+    assert_eq!(chips_0, starting_stack);
+    assert_eq!(chips_1, starting_stack);
+    assert_eq!(table.prize_pool, starting_stack * 2);
+
+    // Tournament begins
+    table.start_hand().unwrap();
+    assert!(table.is_started);
+
+    // New player cannot join after tournament has started
+    let join_after = table.sit_player(2, "u2".to_string(), "Charlie".to_string(), starting_stack, tx2);
+    assert!(join_after.is_err(), "Late registration must be blocked");
+    assert!(join_after.unwrap_err().contains("tournament has already started"));
 }

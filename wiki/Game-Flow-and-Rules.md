@@ -89,7 +89,33 @@ To prevent games from hanging when players lose connection:
 
 ---
 
-## 6. End-to-End Example Session
+## 6. Tournament Mode Mechanics
+
+Tournament rooms provide competitive poker where players compete until a single winner remains.
+
+```mermaid
+flowchart TD
+    Create["CreateTournament Room<br/>(Set starting_chips, e.g. 1500)"] --> Reg["Registration Open<br/>(Players join with equal 1500 chips)"]
+    Reg --> Start["StartHand<br/>(is_started = true)"]
+    Start --> Lock["Late Registration Closed<br/>(New players CANNOT join)"]
+    Lock --> Play["Tournament Play<br/>(Hands, blinds, eliminations)"]
+    Play --> Elim["Player chips = 0<br/>(PlayerEliminated event)"]
+    Elim --> Play
+    Play --> Win["1 Player Remains<br/>(TournamentEnded event)"]
+    Win --> Award["Winner awarded full prize pool in MongoDB"]
+```
+
+### Key Rules
+1. **Pre-Game Registration**: Players can create and join tournament rooms while `is_started: false`.
+2. **Equal Starting Chips**: Every player is charged and seated with the exact same `starting_chips` stack.
+3. **No Late Entry**: Once the game begins (first `StartHand`), the room is locked. Any subsequent `JoinTable` from non-seated players is rejected with `"Cannot join room: tournament has already started"`.
+4. **Reconnection Allowed**: Players already seated who experience connection drops can reattach to their existing seat and stack upon reconnecting.
+5. **Elimination**: When a player loses all their chips, they receive a `PlayerEliminated` notification with their finishing rank and are removed from the table.
+6. **Winner Takes All**: When all opponents have been eliminated and one player holds all the chips, `TournamentEnded` is broadcast and the entire accumulated prize pool is credited directly to the winner's account.
+
+---
+
+## 7. End-to-End Example Session
 
 ### Alice (Seat 0, 1000 chips) vs Bob (Seat 1, 1000 chips)
 

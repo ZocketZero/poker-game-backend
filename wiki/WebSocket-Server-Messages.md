@@ -13,16 +13,18 @@ These messages are sent from the server to clients over the WebSocket connection
 | [`TableState`](#3-tablestate) | Requesting client | Comprehensive table state snapshot |
 | [`PlayerJoined`](#4-playerjoined) | All seated players | Notification that a player joined the table |
 | [`PlayerLeft`](#5-playerleft) | All seated players | Notification that a player left the table |
-| [`HoleCards`](#6-holecards) | **Direct / Private** | Private hole cards dealt to the owning player |
-| [`YourTurn`](#7-yourturn) | **Direct / Private** | Turn notification with legal action parameters |
-| [`GameEvent`](#8-gameevent) | All seated players | Public poker engine events (streets, blinds, showdown) |
-| [`Error`](#9-error) | Requesting client | Operation failure or invalid message details |
+| [`PlayerEliminated`](#6-playereliminated) | All seated players | Notification that a tournament player was eliminated |
+| [`TournamentEnded`](#7-tournamentended) | All seated players | Notification that a tournament finished and winner was crowned |
+| [`HoleCards`](#8-holecards) | **Direct / Private** | Private hole cards dealt to the owning player |
+| [`YourTurn`](#9-yourturn) | **Direct / Private** | Turn notification with legal action parameters |
+| [`GameEvent`](#10-gameevent) | All seated players | Public poker engine events (streets, blinds, showdown) |
+| [`Error`](#11-error) | Requesting client | Operation failure or invalid message details |
 
 ---
 
 ## 1. `TableList`
 
-Sent in response to a `ListTables` or `CreateTable` request.
+Sent in response to a `ListTables`, `CreateTable`, or `CreateTournament` request.
 
 ### Message Payload
 ```json
@@ -31,12 +33,27 @@ Sent in response to a `ListTables` or `CreateTable` request.
   "tables": [
     {
       "id": "8b51d8b7-6cb5-4f46-95fa-d4b533cb18df",
-      "name": "Table-8b51d8b7",
+      "name": "Tournament-8b51d8b7",
       "player_count": 3,
       "max_players": 6,
       "small_blind": 10,
       "big_blind": 20,
-      "stage": "PreFlop"
+      "stage": "PreFlop",
+      "game_mode": "Tournament",
+      "is_started": false,
+      "starting_chips": 1000
+    },
+    {
+      "id": "4a12c9e1-1db4-4f32-82ea-b1c422da10ab",
+      "name": "Table-4a12c9e1",
+      "player_count": 2,
+      "max_players": 6,
+      "small_blind": 5,
+      "big_blind": 10,
+      "stage": "HandEnded",
+      "game_mode": "Cash",
+      "is_started": true,
+      "starting_chips": null
     }
   ]
 }
@@ -79,7 +96,7 @@ Sent to a joining player immediately after `JoinedTable` to provide a full snaps
     {
       "seat": 1,
       "username": "bob",
-      "chips": 980,
+      "chips": 1000,
       "status": "Active",
       "current_bet": 20
     },
@@ -94,7 +111,9 @@ Sent to a joining player immediately after `JoinedTable` to provide a full snaps
   "stage": "PreFlop",
   "board": [],
   "pot": 30,
-  "current_player": 0
+  "current_player": 0,
+  "game_mode": "Tournament",
+  "is_started": false
 }
 ```
 
@@ -104,6 +123,8 @@ Sent to a joining player immediately after `JoinedTable` to provide a full snaps
 - `board`: Community cards visible on the board (e.g. `["A♠", "K♦", "2♣"]`).
 - `pot`: Total chips currently in the pot across all betting rounds.
 - `current_player`: Seat index of the player whose turn it is to act (`null` if no active turn).
+- `game_mode`: `"Cash"` or `"Tournament"`.
+- `is_started`: Whether the game has begun (in tournament mode, prevents new players from joining).
 
 ---
 
@@ -140,7 +161,44 @@ Broadcast to remaining players when a seated player leaves or disconnects.
 
 ---
 
-## 6. `HoleCards`
+## 6. `PlayerEliminated`
+
+Broadcast in **Tournament Mode** when a player's chip stack reaches `0` at the end of a hand.
+
+### Message Payload
+```json
+{
+  "type": "PlayerEliminated",
+  "table_id": "8b51d8b7-6cb5-4f46-95fa-d4b533cb18df",
+  "seat": 1,
+  "username": "bob",
+  "rank": 2
+}
+```
+
+- `rank`: Finishing position in the tournament (e.g. `2` for 2nd place runner-up).
+
+---
+
+## 7. `TournamentEnded`
+
+Broadcast in **Tournament Mode** when only one player remains with chips, concluding the tournament.
+
+### Message Payload
+```json
+{
+  "type": "TournamentEnded",
+  "table_id": "8b51d8b7-6cb5-4f46-95fa-d4b533cb18df",
+  "winner_username": "alice",
+  "prize": 2000
+}
+```
+
+- `prize`: Total accumulated tournament prize pool credited directly to the winner's MongoDB account.
+
+---
+
+## 8. `HoleCards`
 
 **Private Message**: Sent strictly to the owner of the cards when a hand begins. It is never broadcast in public events.
 
@@ -158,7 +216,7 @@ Broadcast to remaining players when a seated player leaves or disconnects.
 
 ---
 
-## 7. `YourTurn`
+## 9. `YourTurn`
 
 **Private Message**: Sent strictly to the player who must act, specifying exact legal actions and bet bounds.
 
@@ -186,7 +244,7 @@ Broadcast to remaining players when a seated player leaves or disconnects.
 
 ---
 
-## 8. `GameEvent`
+## 10. `GameEvent`
 
 Broadcast to all seated players at the table whenever an engine event occurs.
 
@@ -257,7 +315,6 @@ Broadcast to all seated players at the table whenever an engine event occurs.
 ```
 
 #### Public Player Turn Notification
-*Note: Public turn notifications do not include the private `legal_actions` payload.*
 ```json
 {
   "type": "GameEvent",
@@ -313,7 +370,7 @@ Broadcast to all seated players at the table whenever an engine event occurs.
 
 ---
 
-## 9. `Error`
+## 11. `Error`
 
 Sent directly to a client when their request cannot be processed.
 
@@ -321,6 +378,6 @@ Sent directly to a client when their request cannot be processed.
 ```json
 {
   "type": "Error",
-  "message": "Insufficient chips: you have 500, buy-in requires 1000"
+  "message": "Cannot join room: tournament has already started"
 }
 ```
