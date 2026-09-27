@@ -44,6 +44,17 @@ poker-backend/
 ├── Cargo.toml                   # Dependencies
 ├── docs/
 │   └── artifact.md              # Implementation walkthrough
+├── wiki/                        # GitHub Wiki API Documentation
+│   ├── Home.md                  # Wiki landing page & index
+│   ├── _Sidebar.md              # Wiki navigation sidebar
+│   ├── _Footer.md               # Wiki footer
+│   ├── REST-API.md              # REST endpoints reference
+│   ├── WebSocket-Protocol.md    # WebSocket gateway & lifecycle
+│   ├── WebSocket-Client-Messages.md # Client-to-server messages
+│   ├── WebSocket-Server-Messages.md # Server-to-client messages
+│   ├── Game-Flow-and-Rules.md   # NLHE engine rules & game flow
+│   └── Database-and-Persistence.md # MongoDB schema & chip lifecycle
+├── tests/                       # Automated integration tests
 └── src/
     ├── main.rs                  # Entry point, HTTP server setup
     ├── config.rs                # Environment config loader
@@ -114,6 +125,19 @@ You should see:
 [INFO  poker_backend::db] Connected to MongoDB successfully
 [INFO  poker_backend::db] Database indexes ensured
 ```
+
+---
+
+## API Documentation & Wiki
+
+Full GitHub Wiki documentation is maintained in the [`wiki/`](wiki/) directory:
+- [**Wiki Home**](wiki/Home.md)
+- [**REST API Reference**](wiki/REST-API.md)
+- [**WebSocket Protocol & Lifecycle**](wiki/WebSocket-Protocol.md)
+- [**Client Messages (Client → Server)**](wiki/WebSocket-Client-Messages.md)
+- [**Server Messages (Server → Client)**](wiki/WebSocket-Server-Messages.md)
+- [**Game Flow & Rules**](wiki/Game-Flow-and-Rules.md)
+- [**Database & Persistence**](wiki/Database-and-Persistence.md)
 
 ---
 
