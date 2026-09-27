@@ -1,26 +1,12 @@
 use std::sync::Arc;
 
 use actix_web::{App, HttpResponse, HttpServer, web};
-use mongodb::Database;
 use tokio::sync::RwLock;
 
-mod auth;
-mod config;
-mod db;
-mod error;
-mod game;
-mod ws;
-
-use crate::config::Config;
-use crate::game::lobby::Lobby;
-
-/// Shared application state available to all request handlers.
-#[derive(Clone)]
-pub struct AppState {
-    pub config: Config,
-    pub db: Database,
-    pub lobby: Arc<RwLock<Lobby>>,
-}
+use poker_backend::config::Config;
+use poker_backend::db;
+use poker_backend::game::lobby::Lobby;
+use poker_backend::{AppState, auth, ws};
 
 async fn health() -> HttpResponse {
     HttpResponse::Ok().json(serde_json::json!({
@@ -47,7 +33,7 @@ async fn main() -> std::io::Result<()> {
         .await
         .expect("Failed to connect to MongoDB");
 
-    let lobby = Arc::new(RwLock::new(Lobby::new()));
+    let lobby = Arc::new(RwLock::new(Lobby::new(Some(database.clone()))));
 
     let bind_addr = format!("{}:{}", config.server_host, config.server_port);
 

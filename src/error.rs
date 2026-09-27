@@ -1,6 +1,7 @@
 use actix_web::{HttpResponse, ResponseError};
 
 #[derive(Debug, thiserror::Error)]
+#[allow(dead_code)]
 pub enum AppError {
     #[error("Authentication failed: {0}")]
     Auth(String),

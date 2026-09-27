@@ -38,6 +38,11 @@ pub async fn register(
             "Password must be at least 4 characters".to_string(),
         ));
     }
+    if password.len() > 72 {
+        return Err(AppError::BadRequest(
+            "Password cannot exceed 72 characters".to_string(),
+        ));
+    }
 
     let password_hash = bcrypt::hash(password, bcrypt::DEFAULT_COST)?;
 

@@ -5,6 +5,7 @@ use poker_engine::table::TableConfig;
 use tokio::sync::mpsc;
 
 use crate::auth;
+use crate::db::repository;
 use crate::game::messages::{ClientMessage, ServerMessage};
 use crate::AppState;
 
@@ -27,7 +28,7 @@ pub async fn ws_handler(
     let claims = auth::validate_token(&query.token, &state.config.jwt_secret)
         .map_err(|e| actix_web::error::ErrorUnauthorized(e.to_string()))?;
 
-    let (response, mut session, mut msg_stream) = actix_ws::handle(&req, stream)?;
+    let (response, session, mut msg_stream) = actix_ws::handle(&req, stream)?;
 
     let user_id = claims.sub.clone();
     let username = claims.username.clone();
@@ -42,7 +43,7 @@ pub async fn ws_handler(
     actix_rt::spawn(async move {
         log::info!("WebSocket connected: {} ({})", username, user_id);
 
-        // Sender task: forward ServerMessages to the WebSocket
+        // Sender task: forwards ServerMessages to the WebSocket in strictly ordered FIFO
         let mut send_session = session.clone();
         let sender_handle = actix_rt::spawn(async move {
             while let Some(msg) = rx.recv().await {
@@ -54,35 +55,35 @@ pub async fn ws_handler(
             }
         });
 
-        // Receiver loop: read client messages from the WebSocket
+        // Receiver loop: reads client messages from the WebSocket
         while let Some(Ok(msg)) = msg_stream.next().await {
             match msg {
                 Message::Text(text) => {
                     let text_str = text.to_string();
                     match serde_json::from_str::<ClientMessage>(&text_str) {
                         Ok(client_msg) => {
-                            handle_client_message(
+                            if let Err(e) = handle_client_message(
                                 &state,
                                 &user_id,
                                 &username,
                                 client_msg,
                                 &tx,
-                                &mut session,
                             )
-                            .await;
+                            .await
+                            {
+                                let _ = tx.send(ServerMessage::Error { message: e });
+                            }
                         }
                         Err(e) => {
-                            let err_msg = ServerMessage::Error {
+                            let _ = tx.send(ServerMessage::Error {
                                 message: format!("Invalid message: {e}"),
-                            };
-                            if let Ok(json) = serde_json::to_string(&err_msg) {
-                                let _ = session.text(json).await;
-                            }
+                            });
                         }
                     }
                 }
                 Message::Ping(bytes) => {
-                    let _ = session.pong(&bytes).await;
+                    let mut s = session.clone();
+                    let _ = s.pong(&bytes).await;
                 }
                 Message::Close(_) => {
                     break;
@@ -93,6 +94,18 @@ pub async fn ws_handler(
 
         log::info!("WebSocket disconnected: {} ({})", username, user_id);
         sender_handle.abort();
+
+        // Clean up tables the user was seated at and refund their chips to DB
+        let lobby = state.lobby.read().await;
+        let refunded = lobby.leave_all_tables(&user_id).await;
+        for (_table_id, chips) in refunded {
+            if chips > 0 {
+                if let Ok(Some(user)) = repository::find_user_by_username(&state.db, &username).await {
+                    let new_balance = user.chips.saturating_add(chips);
+                    let _ = repository::update_chips(&state.db, &username, new_balance).await;
+                }
+            }
+        }
     });
 
     Ok(response)
@@ -105,93 +118,112 @@ async fn handle_client_message(
     username: &str,
     msg: ClientMessage,
     tx: &mpsc::UnboundedSender<ServerMessage>,
-    session: &mut actix_ws::Session,
-) {
-    let result: Result<Option<ServerMessage>, String> = async {
-        match msg {
-            ClientMessage::ListTables => {
-                let lobby = state.lobby.read().await;
-                let tables = lobby.list_tables().await;
-                Ok(Some(ServerMessage::TableList { tables }))
-            }
+) -> Result<(), String> {
+    match msg {
+        ClientMessage::ListTables => {
+            let lobby = state.lobby.read().await;
+            let tables = lobby.list_tables().await;
+            let _ = tx.send(ServerMessage::TableList { tables });
+        }
 
-            ClientMessage::CreateTable {
+        ClientMessage::CreateTable {
+            small_blind,
+            big_blind,
+            ante,
+            max_players,
+        } => {
+            let config = TableConfig {
                 small_blind,
                 big_blind,
                 ante,
                 max_players,
-            } => {
-                let config = TableConfig {
-                    small_blind,
-                    big_blind,
-                    ante,
-                    max_players,
-                };
+            };
+            let table_id = {
                 let mut lobby = state.lobby.write().await;
-                let table_id = lobby.create_table(config);
-                let tables = lobby.list_tables().await;
-                log::info!("Table {} created by {}", table_id, username);
-                Ok(Some(ServerMessage::TableList { tables }))
+                lobby.create_table(config)?
+            };
+            log::info!("Table {} created by {}", table_id, username);
+            let lobby = state.lobby.read().await;
+            let tables = lobby.list_tables().await;
+            let _ = tx.send(ServerMessage::TableList { tables });
+        }
+
+        ClientMessage::JoinTable {
+            table_id,
+            seat,
+            buy_in,
+        } => {
+            if buy_in == 0 {
+                return Err("Buy-in must be greater than 0".to_string());
             }
 
-            ClientMessage::JoinTable {
-                table_id,
+            // Verify user has sufficient chips in database
+            let user = repository::find_user_by_username(&state.db, username)
+                .await
+                .map_err(|e| format!("Database error: {e}"))?
+                .ok_or_else(|| "User not found".to_string())?;
+
+            if user.chips < buy_in {
+                return Err(format!(
+                    "Insufficient chips: you have {}, buy-in requires {}",
+                    user.chips, buy_in
+                ));
+            }
+
+            // Deduct buy-in chips from database
+            let new_balance = user.chips - buy_in;
+            repository::update_chips(&state.db, username, new_balance)
+                .await
+                .map_err(|e| format!("Database error: {e}"))?;
+
+            let lobby = state.lobby.read().await;
+            let join_res = lobby
+                .join_table(
+                    &table_id,
+                    seat,
+                    user_id.to_string(),
+                    username.to_string(),
+                    buy_in,
+                    tx.clone(),
+                )
+                .await;
+
+            if let Err(e) = join_res {
+                // Refund chips if join failed
+                let _ = repository::update_chips(&state.db, username, user.chips).await;
+                return Err(e);
+            }
+
+            // Send confirmation followed by full table state snapshot
+            let _ = tx.send(ServerMessage::JoinedTable {
+                table_id: table_id.clone(),
                 seat,
-                buy_in,
-            } => {
-                let lobby = state.lobby.read().await;
-                lobby
-                    .join_table(
-                        &table_id,
-                        seat,
-                        user_id.to_string(),
-                        username.to_string(),
-                        buy_in,
-                        tx.clone(),
-                    )
-                    .await?;
+            });
+            let table_state = lobby.get_table_state(&table_id).await?;
+            let _ = tx.send(table_state);
+        }
 
-                // Send the joiner a table state snapshot
-                let table_state = lobby.get_table_state(&table_id).await?;
-                let _ = tx.send(table_state);
-
-                Ok(Some(ServerMessage::JoinedTable { table_id, seat }))
+        ClientMessage::LeaveTable { table_id } => {
+            let lobby = state.lobby.read().await;
+            let chips = lobby.leave_table(&table_id, user_id).await?;
+            if chips > 0 {
+                if let Ok(Some(user)) = repository::find_user_by_username(&state.db, username).await {
+                    let new_balance = user.chips.saturating_add(chips);
+                    let _ = repository::update_chips(&state.db, username, new_balance).await;
+                }
             }
+        }
 
-            ClientMessage::LeaveTable { table_id } => {
-                let lobby = state.lobby.read().await;
-                lobby.leave_table(&table_id, user_id).await?;
-                Ok(None)
-            }
+        ClientMessage::StartHand { table_id } => {
+            let lobby = state.lobby.read().await;
+            lobby.start_hand(&table_id).await?;
+        }
 
-            ClientMessage::StartHand { table_id } => {
-                let lobby = state.lobby.read().await;
-                lobby.start_hand(&table_id).await?;
-                Ok(None)
-            }
-
-            ClientMessage::PlayerAction { table_id, action } => {
-                let engine_action: poker_engine::Action = action.into();
-                let lobby = state.lobby.read().await;
-                lobby.player_action(&table_id, user_id, engine_action).await?;
-                Ok(None)
-            }
+        ClientMessage::PlayerAction { table_id, action } => {
+            let engine_action: poker_engine::Action = action.into();
+            let lobby = state.lobby.read().await;
+            lobby.player_action(&table_id, user_id, engine_action).await?;
         }
     }
-    .await;
-
-    match result {
-        Ok(Some(response)) => {
-            if let Ok(json) = serde_json::to_string(&response) {
-                let _ = session.text(json).await;
-            }
-        }
-        Ok(None) => {}
-        Err(e) => {
-            let err_msg = ServerMessage::Error { message: e };
-            if let Ok(json) = serde_json::to_string(&err_msg) {
-                let _ = session.text(json).await;
-            }
-        }
-    }
+    Ok(())
 }
