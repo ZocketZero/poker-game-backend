@@ -27,6 +27,8 @@ impl Lobby {
     /// Create a new table or tournament room and return its ID.
     pub fn create_table(
         &mut self,
+        creator_id: String,
+        creator_username: String,
         config: TableConfig,
         game_mode: GameMode,
         starting_chips: Option<u64>,
@@ -55,6 +57,8 @@ impl Lobby {
         let game_table = GameTable::new(
             table_id.clone(),
             table_name,
+            creator_id,
+            creator_username,
             config,
             self.db.clone(),
             game_mode,
@@ -86,6 +90,8 @@ impl Lobby {
                 } else {
                     None
                 },
+                creator_id: Some(table.creator_id.clone()),
+                creator_username: Some(table.creator_username.clone()),
             });
         }
         infos
@@ -135,6 +141,9 @@ impl Lobby {
                 let _ = connected.sender.send(join_msg.clone());
             }
         }
+        drop(table);
+
+        self.check_and_schedule_auto_start(table_id).await;
 
         Ok(actual_chips)
     }
@@ -169,6 +178,9 @@ impl Lobby {
                 let _ = connected.sender.send(leave_msg.clone());
             }
         }
+        drop(table);
+
+        self.check_and_schedule_auto_start(table_id).await;
 
         Ok(chips)
     }
@@ -210,11 +222,17 @@ impl Lobby {
                 }
             }
         }
+
+        for (table_id, _) in &results {
+            self.check_and_schedule_auto_start(table_id).await;
+        }
+
         results
     }
 
     /// Start a hand at a table.
-    /// `user_id` must belong to a player already seated at the table.
+    /// In tournament mode, only the creator who created the room can start the tournament for the first time.
+    /// In cash mode, any seated player may trigger manual hand start (though it auto-starts on 2+ players).
     pub async fn start_hand(&self, table_id: &str, user_id: &str) -> Result<(), String> {
         let table_lock = self
             .tables
@@ -223,10 +241,23 @@ impl Lobby {
 
         let mut table = table_lock.write().await;
 
-        // Only a seated player may trigger the hand start.
-        table
-            .find_seat_by_user(user_id)
-            .ok_or_else(|| "You must be seated at the table to start a hand".to_string())?;
+        if table.game_mode == GameMode::Tournament {
+            if table.is_started {
+                return Err("Tournament has already started".to_string());
+            }
+            if user_id != table.creator_id {
+                return Err("Only the room creator can start the tournament".to_string());
+            }
+            if table.player_count() < 2 {
+                return Err("At least 2 players are required to start a tournament".to_string());
+            }
+            table.is_started = true;
+        } else {
+            // Cash mode: only a seated player may trigger manual hand start
+            table
+                .find_seat_by_user(user_id)
+                .ok_or_else(|| "You must be seated at the table to start a hand".to_string())?;
+        }
 
         table.start_hand()
     }
@@ -254,7 +285,81 @@ impl Lobby {
             return Err("It is not your turn".to_string());
         }
 
-        table.apply_action(action)
+        let res = table.apply_action(action);
+        drop(table);
+        res?;
+
+        self.check_and_schedule_auto_start(table_id).await;
+        Ok(())
+    }
+
+    /// Check table conditions and schedule auto-start of the next hand if appropriate.
+    pub async fn check_and_schedule_auto_start(&self, table_id: &str) {
+        let table_lock = match self.tables.get(table_id) {
+            Some(t) => t.clone(),
+            None => return,
+        };
+
+        let mut table = table_lock.write().await;
+
+        // Must be in HandEnded stage
+        if table.engine.stage != poker_engine::events::Stage::HandEnded {
+            return;
+        }
+
+        // Must not already have a timer scheduled
+        if table.is_auto_start_scheduled {
+            return;
+        }
+
+        // Check if criteria for starting are met
+        let should_start = match table.game_mode {
+            GameMode::Cash => table.player_count() >= 2,
+            GameMode::Tournament => table.is_started && table.player_count() >= 2,
+        };
+
+        if !should_start {
+            return;
+        }
+
+        table.is_auto_start_scheduled = true;
+        table.auto_start_epoch += 1;
+        let epoch = table.auto_start_epoch;
+        let table_id_str = table_id.to_string();
+
+        // 1.5s for initial table start, 3s between consecutive hands to view showdown/results
+        let delay_ms = if table.engine.hand_count == 0 { 1500 } else { 3000 };
+        let delay = std::time::Duration::from_millis(delay_ms);
+
+        let table_lock_for_task = table_lock.clone();
+        drop(table);
+
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+
+            let mut table = table_lock_for_task.write().await;
+            if table.auto_start_epoch != epoch {
+                return;
+            }
+            table.is_auto_start_scheduled = false;
+
+            if table.engine.stage != poker_engine::events::Stage::HandEnded {
+                return;
+            }
+
+            let can_start = match table.game_mode {
+                GameMode::Cash => table.player_count() >= 2,
+                GameMode::Tournament => table.is_started && table.player_count() >= 2,
+            };
+
+            if can_start {
+                if let Err(e) = table.start_hand() {
+                    log::error!("Failed to auto-start hand for table {}: {}", table_id_str, e);
+                } else {
+                    log::info!("Auto-started hand for table {}", table_id_str);
+                }
+            }
+        });
     }
 
     /// Get the table state snapshot for a specific table.

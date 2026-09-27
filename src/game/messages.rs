@@ -104,6 +104,11 @@ impl From<ActionPayload> for Action {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type")]
 pub enum ServerMessage {
+    /// Response to CreateTable or CreateTournament confirming table creation
+    TableCreated {
+        table_id: String,
+    },
+
     /// Response to ListTables
     TableList {
         tables: Vec<TableInfo>,
@@ -176,6 +181,8 @@ pub enum ServerMessage {
         current_player: Option<usize>,
         game_mode: GameMode,
         is_started: bool,
+        creator_id: Option<String>,
+        creator_username: Option<String>,
     },
 
     /// Error message
@@ -197,6 +204,8 @@ pub struct TableInfo {
     pub game_mode: GameMode,
     pub is_started: bool,
     pub starting_chips: Option<u64>,
+    pub creator_id: Option<String>,
+    pub creator_username: Option<String>,
 }
 
 /// Public seat information (no hole cards).

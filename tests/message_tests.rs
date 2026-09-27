@@ -100,6 +100,13 @@ fn test_server_message_serialization() {
     assert!(json.contains(r#""type":"JoinedTable""#));
     assert!(json.contains(r#""seat":0"#));
 
+    let msg_created = ServerMessage::TableCreated {
+        table_id: "t1".to_string(),
+    };
+    let json_created = serde_json::to_string(&msg_created).unwrap();
+    assert!(json_created.contains(r#""type":"TableCreated""#));
+    assert!(json_created.contains(r#""table_id":"t1""#));
+
     let msg = ServerMessage::TableList {
         tables: vec![TableInfo {
             id: "t1".to_string(),
@@ -112,12 +119,15 @@ fn test_server_message_serialization() {
             game_mode: GameMode::Tournament,
             is_started: false,
             starting_chips: Some(1000),
+            creator_id: Some("u1".to_string()),
+            creator_username: Some("Alice".to_string()),
         }],
     };
     let json = serde_json::to_string(&msg).unwrap();
     assert!(json.contains(r#""type":"TableList""#));
     assert!(json.contains(r#""player_count":2"#));
     assert!(json.contains(r#""game_mode":"Tournament""#));
+    assert!(json.contains(r#""creator_username":"Alice""#));
 
     let msg_elim = ServerMessage::PlayerEliminated {
         table_id: "t1".to_string(),

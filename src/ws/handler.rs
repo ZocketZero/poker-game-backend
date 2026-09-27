@@ -142,9 +142,18 @@ async fn handle_client_message(
             };
             let table_id = {
                 let mut lobby = state.lobby.write().await;
-                lobby.create_table(config, game_mode, starting_chips)?
+                lobby.create_table(
+                    user_id.to_string(),
+                    username.to_string(),
+                    config,
+                    game_mode,
+                    starting_chips,
+                )?
             };
             log::info!("Table {} ({:?}) created by {}", table_id, game_mode, username);
+            let _ = tx.send(ServerMessage::TableCreated {
+                table_id: table_id.clone(),
+            });
             let lobby = state.lobby.read().await;
             let tables = lobby.list_tables().await;
             let _ = tx.send(ServerMessage::TableList { tables });
@@ -166,12 +175,17 @@ async fn handle_client_message(
             let table_id = {
                 let mut lobby = state.lobby.write().await;
                 lobby.create_table(
+                    user_id.to_string(),
+                    username.to_string(),
                     config,
                     crate::game::messages::GameMode::Tournament,
                     Some(starting_chips),
                 )?
             };
             log::info!("Tournament {} created by {}", table_id, username);
+            let _ = tx.send(ServerMessage::TableCreated {
+                table_id: table_id.clone(),
+            });
             let lobby = state.lobby.read().await;
             let tables = lobby.list_tables().await;
             let _ = tx.send(ServerMessage::TableList { tables });

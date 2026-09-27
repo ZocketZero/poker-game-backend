@@ -29,6 +29,8 @@ pub struct CurrentHand {
 pub struct GameTable {
     pub id: String,
     pub name: String,
+    pub creator_id: String,
+    pub creator_username: String,
     pub engine: Table,
     /// seat index -> connected player
     pub players: HashMap<usize, ConnectedPlayer>,
@@ -38,12 +40,16 @@ pub struct GameTable {
     pub starting_chips: u64,
     pub is_started: bool,
     pub prize_pool: u64,
+    pub auto_start_epoch: u64,
+    pub is_auto_start_scheduled: bool,
 }
 
 impl GameTable {
     pub fn new(
         id: String,
         name: String,
+        creator_id: String,
+        creator_username: String,
         config: TableConfig,
         db: Option<Database>,
         game_mode: GameMode,
@@ -52,6 +58,8 @@ impl GameTable {
         Self {
             id,
             name,
+            creator_id,
+            creator_username,
             engine: Table::new(config),
             players: HashMap::new(),
             db,
@@ -60,6 +68,8 @@ impl GameTable {
             starting_chips,
             is_started: false,
             prize_pool: 0,
+            auto_start_epoch: 0,
+            is_auto_start_scheduled: false,
         }
     }
 
@@ -497,6 +507,8 @@ impl GameTable {
             current_player: self.engine.current_player,
             game_mode: self.game_mode,
             is_started: self.is_started,
+            creator_id: Some(self.creator_id.clone()),
+            creator_username: Some(self.creator_username.clone()),
         }
     }
 

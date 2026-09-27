@@ -18,6 +18,8 @@ async fn test_sit_and_remove_player() {
     let mut table = GameTable::new(
         "tbl-1".to_string(),
         "Table 1".to_string(),
+        "admin".to_string(),
+        "Admin".to_string(),
         test_config(),
         None,
         GameMode::Cash,
@@ -53,6 +55,8 @@ async fn test_reconnect_reattaches_sender() {
     let mut table = GameTable::new(
         "tbl-1".to_string(),
         "Table 1".to_string(),
+        "admin".to_string(),
+        "Admin".to_string(),
         test_config(),
         None,
         GameMode::Cash,
@@ -76,6 +80,8 @@ async fn test_no_duplicate_events_on_subsequent_actions() {
     let mut table = GameTable::new(
         "tbl-1".to_string(),
         "Table 1".to_string(),
+        "admin".to_string(),
+        "Admin".to_string(),
         test_config(),
         None,
         GameMode::Cash,
@@ -148,6 +154,8 @@ async fn test_hole_cards_are_private() {
     let mut table = GameTable::new(
         "tbl-1".to_string(),
         "Table 1".to_string(),
+        "admin".to_string(),
+        "Admin".to_string(),
         test_config(),
         None,
         GameMode::Cash,
@@ -189,6 +197,8 @@ async fn test_auto_fold_disconnected_player() {
     let mut table = GameTable::new(
         "tbl-1".to_string(),
         "Table 1".to_string(),
+        "admin".to_string(),
+        "Admin".to_string(),
         test_config(),
         None,
         GameMode::Cash,
@@ -221,6 +231,8 @@ async fn test_tournament_equal_starting_chips_and_elimination() {
     let mut table = GameTable::new(
         "tourney-1".to_string(),
         "Tournament 1".to_string(),
+        "admin".to_string(),
+        "Admin".to_string(),
         test_config(),
         None,
         GameMode::Tournament,
