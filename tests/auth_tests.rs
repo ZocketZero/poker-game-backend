@@ -43,3 +43,19 @@ fn test_bcrypt_hashing_and_verification() {
     assert!(bcrypt::verify(password, &hash).unwrap());
     assert!(!bcrypt::verify("wrongPassword", &hash).unwrap());
 }
+
+#[test]
+fn test_username_regex_whitelist() {
+    use poker_backend::auth::auth_handlers::USERNAME_REGEX;
+
+    assert!(USERNAME_REGEX.is_match("alice"));
+    assert!(USERNAME_REGEX.is_match("Bob123"));
+    assert!(USERNAME_REGEX.is_match("USER999"));
+
+    assert!(!USERNAME_REGEX.is_match(""));
+    assert!(!USERNAME_REGEX.is_match("alice smith"));
+    assert!(!USERNAME_REGEX.is_match("bob@example.com"));
+    assert!(!USERNAME_REGEX.is_match("user_name"));
+    assert!(!USERNAME_REGEX.is_match("admin$"));
+    assert!(!USERNAME_REGEX.is_match("hello\0world"));
+}

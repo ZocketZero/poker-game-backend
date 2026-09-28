@@ -7,6 +7,7 @@ pub struct Config {
     pub jwt_secret: String,
     pub server_host: String,
     pub server_port: u16,
+    pub allowed_origins: Vec<String>,
 }
 
 impl Config {
@@ -24,6 +25,12 @@ impl Config {
                 .unwrap_or_else(|_| "8080".to_string())
                 .parse()
                 .expect("SERVER_PORT must be a valid u16"),
+            allowed_origins: env::var("ALLOWED_ORIGINS")
+                .unwrap_or_else(|_| "http://localhost:3000,http://127.0.0.1:3000".to_string())
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
         }
     }
 }

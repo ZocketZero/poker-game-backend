@@ -45,16 +45,19 @@ async fn main() -> std::io::Result<()> {
     };
 
     HttpServer::new(move || {
-        let cors = Cors::default()
-            .allowed_origin("http://localhost:3000")
+        let mut cors = Cors::default()
             .allowed_methods(vec!["GET", "POST", "PUT", "DELETE", "OPTIONS"])
             .allowed_headers(vec![
                 http::header::AUTHORIZATION,
                 http::header::ACCEPT,
                 http::header::CONTENT_TYPE,
             ])
-            .supports_credentials() // Omit if using send_wildcard()
+            .supports_credentials()
             .max_age(3600);
+
+        for origin in &app_state.config.allowed_origins {
+            cors = cors.allowed_origin(origin);
+        }
 
         App::new()
             .wrap(cors)
@@ -64,8 +67,8 @@ async fn main() -> std::io::Result<()> {
             // Auth REST endpoints
             .service(
                 web::scope("/api/auth")
-                    .route("/register", web::post().to(auth::handlers::register))
-                    .route("/login", web::post().to(auth::handlers::login)),
+                    .route("/register", web::post().to(auth::auth_handlers::register))
+                    .route("/login", web::post().to(auth::auth_handlers::login)),
             )
             // WebSocket endpoint
             .route("/ws", web::get().to(ws::handler::ws_handler))

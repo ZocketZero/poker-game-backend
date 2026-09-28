@@ -1900,6 +1900,7 @@ dependencies = [
  "log",
  "mongodb",
  "poker_engine",
+ "regex",
  "serde",
  "serde_json",
  "thiserror",
