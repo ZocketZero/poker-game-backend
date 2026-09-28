@@ -1910,6 +1910,7 @@ dependencies = [
 [[package]]
 name = "poker_engine"
 version = "0.0.1"
+source = "git+https://github.com/ZocketZero/poker-engine?branch=dev#82be79e675e6699fb506144e387e6ca001812727"
 dependencies = [
  "colored",
  "rand 0.8.8",

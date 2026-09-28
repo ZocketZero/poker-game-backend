@@ -33,5 +33,6 @@ log = "0.4"
 thiserror = "2"
 
 # Game engine
-poker_engine = { path = "../poker-engine" }
+# poker_engine = { path = "../poker-engine" }
 actix-cors = "0.7.2"
+poker_engine = { git = "https://github.com/ZocketZero/poker-engine", branch = "dev", version = "0.0.1" }
