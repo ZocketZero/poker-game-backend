@@ -1,0 +1,6 @@
+MONGODB_URI=mongodb://poker_admin:poker_secret@localhost:27017
+DATABASE_NAME=poker_db
+JWT_SECRET=change-me-to-a-secure-random-string
+SERVER_HOST=127.0.0.1
+SERVER_PORT=8080
+RUST_LOG=info
