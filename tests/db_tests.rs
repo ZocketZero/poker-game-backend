@@ -13,7 +13,8 @@ fn test_user_doc_bson_roundtrip() {
     };
 
     let bson_doc = to_document(&doc).expect("Serialization to BSON must succeed");
-    let deserialized: UserDoc = from_document(bson_doc).expect("Deserialization from BSON must succeed");
+    let deserialized: UserDoc =
+        from_document(bson_doc).expect("Deserialization from BSON must succeed");
 
     assert_eq!(doc.username, deserialized.username);
     assert_eq!(doc.chips, deserialized.chips);
@@ -47,7 +48,8 @@ fn test_hand_history_doc_bson_roundtrip() {
     };
 
     let bson_doc = to_document(&doc).expect("Serialization to BSON must succeed");
-    let deserialized: HandHistoryDoc = from_document(bson_doc).expect("Deserialization from BSON must succeed");
+    let deserialized: HandHistoryDoc =
+        from_document(bson_doc).expect("Deserialization from BSON must succeed");
 
     assert_eq!(doc.table_id, deserialized.table_id);
     assert_eq!(doc.hand_number, deserialized.hand_number);

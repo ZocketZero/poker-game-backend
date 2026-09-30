@@ -8,9 +8,9 @@ pub mod config;
 pub mod db;
 pub mod error;
 pub mod game;
-pub mod ws;
 pub mod repositories;
 pub mod routes;
+pub mod ws;
 
 use crate::config::Config;
 use crate::game::lobby::Lobby;

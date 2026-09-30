@@ -53,14 +53,10 @@ pub enum ClientMessage {
     },
 
     /// Leave the current table
-    LeaveTable {
-        table_id: String,
-    },
+    LeaveTable { table_id: String },
 
     /// Request to start a new hand (only works if enough players)
-    StartHand {
-        table_id: String,
-    },
+    StartHand { table_id: String },
 
     /// Submit a game action (fold, check, call, bet, raise, all-in)
     PlayerAction {
@@ -105,20 +101,13 @@ impl From<ActionPayload> for Action {
 #[serde(tag = "type")]
 pub enum ServerMessage {
     /// Response to CreateTable or CreateTournament confirming table creation
-    TableCreated {
-        table_id: String,
-    },
+    TableCreated { table_id: String },
 
     /// Response to ListTables
-    TableList {
-        tables: Vec<TableInfo>,
-    },
+    TableList { tables: Vec<TableInfo> },
 
     /// Confirmation of joining a table
-    JoinedTable {
-        table_id: String,
-        seat: usize,
-    },
+    JoinedTable { table_id: String, seat: usize },
 
     /// A player left the table
     PlayerLeft {
@@ -157,10 +146,7 @@ pub enum ServerMessage {
     },
 
     /// Private: your hole cards
-    HoleCards {
-        table_id: String,
-        cards: [Card; 2],
-    },
+    HoleCards { table_id: String, cards: [Card; 2] },
 
     /// It's your turn — here are your legal actions
     YourTurn {
@@ -186,9 +172,7 @@ pub enum ServerMessage {
     },
 
     /// Error message
-    Error {
-        message: String,
-    },
+    Error { message: String },
 }
 
 /// Public table metadata for lobby listing.

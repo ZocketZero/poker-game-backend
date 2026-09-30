@@ -1,4 +1,6 @@
-use poker_backend::game::messages::{ActionPayload, ClientMessage, GameMode, ServerMessage, TableInfo};
+use poker_backend::game::messages::{
+    ActionPayload, ClientMessage, GameMode, ServerMessage, TableInfo,
+};
 use poker_engine::Action;
 
 #[test]
@@ -69,7 +71,8 @@ fn test_client_message_deserialization() {
         _ => panic!("Expected LeaveTable"),
     }
 
-    let json_action = r#"{"type":"PlayerAction","table_id":"tbl-1","action":{"action":"Raise","amount":100}}"#;
+    let json_action =
+        r#"{"type":"PlayerAction","table_id":"tbl-1","action":{"action":"Raise","amount":100}}"#;
     let msg: ClientMessage = serde_json::from_str(json_action).unwrap();
     match msg {
         ClientMessage::PlayerAction { table_id, action } => {
@@ -85,8 +88,14 @@ fn test_action_payload_conversion() {
     assert_eq!(Action::from(ActionPayload::Fold), Action::Fold);
     assert_eq!(Action::from(ActionPayload::Check), Action::Check);
     assert_eq!(Action::from(ActionPayload::Call), Action::Call);
-    assert_eq!(Action::from(ActionPayload::Bet { amount: 50 }), Action::Bet(50));
-    assert_eq!(Action::from(ActionPayload::Raise { amount: 100 }), Action::Raise(100));
+    assert_eq!(
+        Action::from(ActionPayload::Bet { amount: 50 }),
+        Action::Bet(50)
+    );
+    assert_eq!(
+        Action::from(ActionPayload::Raise { amount: 100 }),
+        Action::Raise(100)
+    );
     assert_eq!(Action::from(ActionPayload::AllIn), Action::AllIn);
 }
 

@@ -15,12 +15,10 @@ impl Config {
         Self {
             mongodb_uri: env::var("MONGODB_URI")
                 .unwrap_or_else(|_| "mongodb://localhost:27017".to_string()),
-            database_name: env::var("DATABASE_NAME")
-                .unwrap_or_else(|_| "poker_db".to_string()),
+            database_name: env::var("DATABASE_NAME").unwrap_or_else(|_| "poker_db".to_string()),
             jwt_secret: env::var("JWT_SECRET")
                 .unwrap_or_else(|_| "dev-secret-change-me".to_string()),
-            server_host: env::var("SERVER_HOST")
-                .unwrap_or_else(|_| "127.0.0.1".to_string()),
+            server_host: env::var("SERVER_HOST").unwrap_or_else(|_| "127.0.0.1".to_string()),
             server_port: env::var("SERVER_PORT")
                 .unwrap_or_else(|_| "8080".to_string())
                 .parse()

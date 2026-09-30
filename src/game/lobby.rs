@@ -149,11 +149,7 @@ impl Lobby {
     }
 
     /// Remove a player from a table and return the chips they leave with.
-    pub async fn leave_table(
-        &self,
-        table_id: &str,
-        user_id: &str,
-    ) -> Result<u64, String> {
+    pub async fn leave_table(&self, table_id: &str, user_id: &str) -> Result<u64, String> {
         let table_lock = self
             .tables
             .get(table_id)
@@ -198,7 +194,8 @@ impl Lobby {
                     continue;
                 }
 
-                let (removed, chips) = if table.engine.stage == poker_engine::events::Stage::HandEnded
+                let (removed, chips) = if table.engine.stage
+                    == poker_engine::events::Stage::HandEnded
                     || table.engine.player(seat).map_or(true, |p| !p.is_in_hand())
                 {
                     table.leave_seat(seat).unwrap_or((None, 0))
@@ -328,7 +325,11 @@ impl Lobby {
         let table_id_str = table_id.to_string();
 
         // 1.5s for initial table start, 3s between consecutive hands to view showdown/results
-        let delay_ms = if table.engine.hand_count == 0 { 1500 } else { 3000 };
+        let delay_ms = if table.engine.hand_count == 0 {
+            1500
+        } else {
+            3000
+        };
         let delay = std::time::Duration::from_millis(delay_ms);
 
         let table_lock_for_task = table_lock.clone();
@@ -354,7 +355,11 @@ impl Lobby {
 
             if can_start {
                 if let Err(e) = table.start_hand() {
-                    log::error!("Failed to auto-start hand for table {}: {}", table_id_str, e);
+                    log::error!(
+                        "Failed to auto-start hand for table {}: {}",
+                        table_id_str,
+                        e
+                    );
                 } else {
                     log::info!("Auto-started hand for table {}", table_id_str);
                 }

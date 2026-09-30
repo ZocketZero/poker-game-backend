@@ -106,7 +106,14 @@ async fn test_join_and_leave_table() {
 
     // Alice joins at seat 0
     lobby
-        .join_table(&table_id, 0, "u1".to_string(), "Alice".to_string(), 1000, tx1)
+        .join_table(
+            &table_id,
+            0,
+            "u1".to_string(),
+            "Alice".to_string(),
+            1000,
+            tx1,
+        )
         .await
         .unwrap();
 
@@ -160,7 +167,14 @@ async fn test_leave_all_tables_on_disconnect() {
 
     let (tx1, _rx1) = mpsc::unbounded_channel();
     lobby
-        .join_table(&table_id, 0, "u1".to_string(), "Alice".to_string(), 1000, tx1)
+        .join_table(
+            &table_id,
+            0,
+            "u1".to_string(),
+            "Alice".to_string(),
+            1000,
+            tx1,
+        )
         .await
         .unwrap();
 
@@ -194,7 +208,14 @@ async fn test_tournament_host_start_and_late_join_restriction() {
 
     // Alice (creator) joins before start with equal starting chips (1500)
     let chips_charged_1 = lobby
-        .join_table(&table_id, 0, "u1".to_string(), "Alice".to_string(), 500, tx1)
+        .join_table(
+            &table_id,
+            0,
+            "u1".to_string(),
+            "Alice".to_string(),
+            500,
+            tx1,
+        )
         .await
         .unwrap();
     assert_eq!(chips_charged_1, 1500);
@@ -221,7 +242,10 @@ async fn test_tournament_host_start_and_late_join_restriction() {
     {
         let table_lock = lobby.get_table(&table_id).unwrap();
         let table = table_lock.read().await;
-        assert!(!table.is_started, "Tournament must not auto start before host starts");
+        assert!(
+            !table.is_started,
+            "Tournament must not auto start before host starts"
+        );
         assert_eq!(table.engine.stage, poker_engine::events::Stage::HandEnded);
     }
 
@@ -246,11 +270,25 @@ async fn test_tournament_host_start_and_late_join_restriction() {
 
     // Charlie tries to join AFTER tournament has begun -> Rejected!
     let join_res = lobby
-        .join_table(&table_id, 2, "u3".to_string(), "Charlie".to_string(), 1500, tx3)
+        .join_table(
+            &table_id,
+            2,
+            "u3".to_string(),
+            "Charlie".to_string(),
+            1500,
+            tx3,
+        )
         .await;
 
-    assert!(join_res.is_err(), "Late joiner must be rejected after game has begun");
-    assert!(join_res.unwrap_err().contains("tournament has already started"));
+    assert!(
+        join_res.is_err(),
+        "Late joiner must be rejected after game has begun"
+    );
+    assert!(
+        join_res
+            .unwrap_err()
+            .contains("tournament has already started")
+    );
 }
 
 #[tokio::test]
@@ -276,7 +314,14 @@ async fn test_cash_table_auto_start_on_two_players() {
 
     // 1 player joins: should not start yet
     lobby
-        .join_table(&table_id, 0, "u1".to_string(), "Alice".to_string(), 1000, tx1)
+        .join_table(
+            &table_id,
+            0,
+            "u1".to_string(),
+            "Alice".to_string(),
+            1000,
+            tx1,
+        )
         .await
         .unwrap();
 
@@ -330,7 +375,14 @@ async fn test_auto_start_next_hand_after_hand_ended() {
 
     // Alice joins seat 0, Bob joins seat 1
     lobby
-        .join_table(&table_id, 0, "u1".to_string(), "Alice".to_string(), 1000, tx1)
+        .join_table(
+            &table_id,
+            0,
+            "u1".to_string(),
+            "Alice".to_string(),
+            1000,
+            tx1,
+        )
         .await
         .unwrap();
     lobby
@@ -369,7 +421,10 @@ async fn test_auto_start_next_hand_after_hand_ended() {
     {
         let table_lock = lobby.get_table(&table_id).unwrap();
         let table = table_lock.read().await;
-        assert_eq!(table.engine.hand_count, 2, "Hand 2 should have auto-started");
+        assert_eq!(
+            table.engine.hand_count, 2,
+            "Hand 2 should have auto-started"
+        );
         assert_eq!(table.engine.stage, poker_engine::events::Stage::PreFlop);
     }
 }
