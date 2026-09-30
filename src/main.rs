@@ -2,12 +2,13 @@ use std::sync::Arc;
 
 use actix_cors::Cors;
 use actix_web::{App, HttpResponse, HttpServer, http, web};
+use poker_backend::routes::routes;
 use tokio::sync::RwLock;
 
+use poker_backend::AppState;
 use poker_backend::config::Config;
 use poker_backend::db;
 use poker_backend::game::lobby::Lobby;
-use poker_backend::{AppState, auth, ws};
 
 async fn health() -> HttpResponse {
     HttpResponse::Ok().json(serde_json::json!({
@@ -64,14 +65,8 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::Data::new(app_state.clone()))
             // Health check
             .route("/health", web::get().to(health))
-            // Auth REST endpoints
-            .service(
-                web::scope("/api/auth")
-                    .route("/register", web::post().to(auth::auth_handlers::register))
-                    .route("/login", web::post().to(auth::auth_handlers::login)),
-            )
-            // WebSocket endpoint
-            .route("/ws", web::get().to(ws::handler::ws_handler))
+            //routes endpoints
+            .service(routes())
     })
     .bind(&bind_addr)?
     .run()
