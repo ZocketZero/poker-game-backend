@@ -4,10 +4,10 @@ use futures_util::StreamExt;
 use poker_engine::table::TableConfig;
 use tokio::sync::mpsc;
 
-use crate::auth;
-use crate::db::repository;
-use crate::game::messages::{ClientMessage, ServerMessage};
 use crate::AppState;
+use crate::auth;
+use crate::game::messages::{ClientMessage, ServerMessage};
+use crate::repositories::user_repository;
 
 #[derive(Debug, serde::Deserialize)]
 pub struct WsQuery {
@@ -62,14 +62,9 @@ pub async fn ws_handler(
                     let text_str = text.to_string();
                     match serde_json::from_str::<ClientMessage>(&text_str) {
                         Ok(client_msg) => {
-                            if let Err(e) = handle_client_message(
-                                &state,
-                                &user_id,
-                                &username,
-                                client_msg,
-                                &tx,
-                            )
-                            .await
+                            if let Err(e) =
+                                handle_client_message(&state, &user_id, &username, client_msg, &tx)
+                                    .await
                             {
                                 let _ = tx.send(ServerMessage::Error { message: e });
                             }
@@ -100,9 +95,11 @@ pub async fn ws_handler(
         let refunded = lobby.leave_all_tables(&user_id).await;
         for (_table_id, chips) in refunded {
             if chips > 0 {
-                if let Ok(Some(user)) = repository::find_user_by_username(&state.db, &username).await {
+                if let Ok(Some(user)) =
+                    user_repository::find_user_by_username(&state.db, &username).await
+                {
                     let new_balance = user.chips.saturating_add(chips);
-                    let _ = repository::update_chips(&state.db, &username, new_balance).await;
+                    let _ = user_repository::update_chips(&state.db, &username, new_balance).await;
                 }
             }
         }
@@ -150,7 +147,12 @@ async fn handle_client_message(
                     starting_chips,
                 )?
             };
-            log::info!("Table {} ({:?}) created by {}", table_id, game_mode, username);
+            log::info!(
+                "Table {} ({:?}) created by {}",
+                table_id,
+                game_mode,
+                username
+            );
             let _ = tx.send(ServerMessage::TableCreated {
                 table_id: table_id.clone(),
             });
@@ -232,7 +234,7 @@ async fn handle_client_message(
             }
 
             // Verify user has sufficient chips in database
-            let user = repository::find_user_by_username(&state.db, username)
+            let user = user_repository::find_user_by_username(&state.db, username)
                 .await
                 .map_err(|e| format!("Database error: {e}"))?
                 .ok_or_else(|| "User not found".to_string())?;
@@ -246,7 +248,7 @@ async fn handle_client_message(
 
             // Deduct required buy-in chips from database
             let new_balance = user.chips - required_chips;
-            repository::update_chips(&state.db, username, new_balance)
+            user_repository::update_chips(&state.db, username, new_balance)
                 .await
                 .map_err(|e| format!("Database error: {e}"))?;
 
@@ -264,7 +266,7 @@ async fn handle_client_message(
 
             if let Err(e) = join_res {
                 // Refund chips if join failed
-                let _ = repository::update_chips(&state.db, username, user.chips).await;
+                let _ = user_repository::update_chips(&state.db, username, user.chips).await;
                 return Err(e);
             }
 
@@ -281,9 +283,11 @@ async fn handle_client_message(
             let lobby = state.lobby.read().await;
             let chips = lobby.leave_table(&table_id, user_id).await?;
             if chips > 0 {
-                if let Ok(Some(user)) = repository::find_user_by_username(&state.db, username).await {
+                if let Ok(Some(user)) =
+                    user_repository::find_user_by_username(&state.db, username).await
+                {
                     let new_balance = user.chips.saturating_add(chips);
-                    let _ = repository::update_chips(&state.db, username, new_balance).await;
+                    let _ = user_repository::update_chips(&state.db, username, new_balance).await;
                 }
             }
         }
@@ -296,7 +300,9 @@ async fn handle_client_message(
         ClientMessage::PlayerAction { table_id, action } => {
             let engine_action: poker_engine::Action = action.into();
             let lobby = state.lobby.read().await;
-            lobby.player_action(&table_id, user_id, engine_action).await?;
+            lobby
+                .player_action(&table_id, user_id, engine_action)
+                .await?;
         }
     }
     Ok(())

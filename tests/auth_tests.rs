@@ -46,7 +46,7 @@ fn test_bcrypt_hashing_and_verification() {
 
 #[test]
 fn test_username_regex_whitelist() {
-    use poker_backend::auth::auth_handlers::USERNAME_REGEX;
+    use poker_backend::auth::USERNAME_REGEX;
 
     assert!(USERNAME_REGEX.is_match("alice"));
     assert!(USERNAME_REGEX.is_match("Bob123"));

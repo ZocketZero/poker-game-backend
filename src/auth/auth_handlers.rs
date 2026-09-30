@@ -3,7 +3,8 @@ use actix_web::{HttpResponse, web};
 use crate::AppState;
 use crate::auth::auth_dtos::{LoginRequest, RegisterRequest};
 use crate::auth::{USERNAME_REGEX, create_token};
-use crate::{db::repository, error::AppError};
+use crate::error::AppError;
+use crate::repositories::user_repository;
 
 const DEFAULT_STARTING_CHIPS: u64 = 10_000;
 
@@ -38,8 +39,9 @@ pub async fn register(
 
     let password_hash = bcrypt::hash(password, bcrypt::DEFAULT_COST)?;
 
-    let user = repository::create_user(&state.db, username, &password_hash, DEFAULT_STARTING_CHIPS)
-        .await?;
+    let user =
+        user_repository::create_user(&state.db, username, &password_hash, DEFAULT_STARTING_CHIPS)
+            .await?;
 
     let user_id = user.id.map(|id| id.to_hex()).unwrap_or_default();
 
@@ -64,7 +66,7 @@ pub async fn login(
         return Err(AppError::Auth("Invalid username or password".to_string()));
     }
 
-    let user = repository::find_user_by_username(&state.db, username)
+    let user = user_repository::find_user_by_username(&state.db, username)
         .await?
         .ok_or_else(|| AppError::Auth("Invalid username or password".to_string()))?;
 

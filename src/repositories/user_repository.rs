@@ -1,29 +1,12 @@
 use chrono::Utc;
+use mongodb::Database;
 use mongodb::bson::doc;
-use mongodb::options::IndexOptions;
-use mongodb::{Database, IndexModel};
 
+use crate::db::collections::USERS_COLLECTION;
 use crate::db::models::{HandHistoryDoc, UserDoc};
 use crate::error::AppError;
 
-const USERS_COLLECTION: &str = "users";
 const HAND_HISTORY_COLLECTION: &str = "hand_history";
-
-/// Create required indexes on startup.
-pub async fn ensure_indexes(db: &Database) -> Result<(), mongodb::error::Error> {
-    let users = db.collection::<UserDoc>(USERS_COLLECTION);
-
-    // Unique index on username
-    let index = IndexModel::builder()
-        .keys(doc! { "username": 1 })
-        .options(IndexOptions::builder().unique(true).build())
-        .build();
-
-    users.create_index(index).await?;
-
-    log::info!("Database indexes ensured");
-    Ok(())
-}
 
 /// Create a new user. Returns error if username already exists.
 pub async fn create_user(
@@ -73,11 +56,7 @@ pub async fn find_user_by_username(
 }
 
 /// Update a user's chip balance.
-pub async fn update_chips(
-    db: &Database,
-    username: &str,
-    new_balance: u64,
-) -> Result<(), AppError> {
+pub async fn update_chips(db: &Database, username: &str, new_balance: u64) -> Result<(), AppError> {
     let users = db.collection::<UserDoc>(USERS_COLLECTION);
     users
         .update_one(
@@ -89,10 +68,7 @@ pub async fn update_chips(
 }
 
 /// Save a hand history record.
-pub async fn save_hand_history(
-    db: &Database,
-    doc: &HandHistoryDoc,
-) -> Result<(), AppError> {
+pub async fn save_hand_history(db: &Database, doc: &HandHistoryDoc) -> Result<(), AppError> {
     let collection = db.collection::<HandHistoryDoc>(HAND_HISTORY_COLLECTION);
     collection.insert_one(doc).await?;
     Ok(())

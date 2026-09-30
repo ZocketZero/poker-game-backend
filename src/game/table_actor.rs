@@ -7,8 +7,8 @@ use poker_engine::{Action, GameEvent, Player, Table};
 use tokio::sync::mpsc;
 
 use crate::db::models::{HandHistoryDoc, HandPlayer};
-use crate::db::repository;
 use crate::game::messages::{GameMode, SeatInfo, ServerMessage, SidePotInfo};
+use crate::repositories::user_repository;
 
 /// A connected player at a table.
 #[derive(Debug, Clone)]
@@ -326,7 +326,10 @@ impl GameTable {
     fn finish_hand(&mut self) {
         if let Some(mut hand) = self.current_hand.take() {
             for p in &mut hand.starting_players {
-                p.ending_chips = self.engine.player(p.seat).map_or(0, |engine_p| engine_p.chips);
+                p.ending_chips = self
+                    .engine
+                    .player(p.seat)
+                    .map_or(0, |engine_p| engine_p.chips);
             }
             let doc = HandHistoryDoc {
                 id: None,
@@ -339,7 +342,7 @@ impl GameTable {
             if let Some(db) = &self.db {
                 let db = db.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = repository::save_hand_history(&db, &doc).await {
+                    if let Err(e) = user_repository::save_hand_history(&db, &doc).await {
                         log::error!("Failed to save hand history: {e}");
                     }
                 });
@@ -394,8 +397,10 @@ impl GameTable {
                     let db = db.clone();
                     let uname = winner_username;
                     tokio::spawn(async move {
-                        if let Ok(Some(u)) = repository::find_user_by_username(&db, &uname).await {
-                            let _ = repository::update_chips(
+                        if let Ok(Some(u)) =
+                            user_repository::find_user_by_username(&db, &uname).await
+                        {
+                            let _ = user_repository::update_chips(
                                 &db,
                                 &uname,
                                 u.chips.saturating_add(prize),
@@ -431,8 +436,10 @@ impl GameTable {
                     let db = db.clone();
                     let username = cp.username;
                     tokio::spawn(async move {
-                        if let Ok(Some(u)) = repository::find_user_by_username(&db, &username).await {
-                            let _ = repository::update_chips(
+                        if let Ok(Some(u)) =
+                            user_repository::find_user_by_username(&db, &username).await
+                        {
+                            let _ = user_repository::update_chips(
                                 &db,
                                 &username,
                                 u.chips.saturating_add(chips),
@@ -517,11 +524,7 @@ impl GameTable {
     pub fn player_count(&self) -> usize {
         self.players
             .iter()
-            .filter(|&(&seat, _)| {
-                self.engine
-                    .player(seat)
-                    .map_or(false, |p| p.chips > 0)
-            })
+            .filter(|&(&seat, _)| self.engine.player(seat).map_or(false, |p| p.chips > 0))
             .count()
     }
 }
