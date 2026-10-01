@@ -284,7 +284,8 @@
       "properties": {
         "type": { "const": "YourTurn" },
         "table_id": { "type": "string" },
-        "legal_actions": { "$ref": "#/definitions/LegalActions" }
+        "legal_actions": { "$ref": "#/definitions/LegalActions" },
+        "time_limit_secs": { "type": "integer", "description": "Decision time limit allotted to the player in seconds" }
       }
     },
     "LegalActions": {

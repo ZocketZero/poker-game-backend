@@ -69,6 +69,10 @@ fn default_max_players() -> usize {
     6
 }
 
+pub fn default_time_limit_secs() -> u64 {
+    15
+}
+
 /// Simplified action payload for JSON deserialization.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "action")]
@@ -152,6 +156,8 @@ pub enum ServerMessage {
     YourTurn {
         table_id: String,
         legal_actions: LegalActions,
+        #[serde(default = "default_time_limit_secs")]
+        time_limit_secs: u64,
     },
 
     /// Full table state snapshot (sent on join)

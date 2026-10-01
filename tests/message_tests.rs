@@ -156,4 +156,26 @@ fn test_server_message_serialization() {
     let json_end = serde_json::to_string(&msg_end).unwrap();
     assert!(json_end.contains(r#""type":"TournamentEnded""#));
     assert!(json_end.contains(r#""prize":3000"#));
+
+    let msg_your_turn = ServerMessage::YourTurn {
+        table_id: "t1".to_string(),
+        legal_actions: poker_engine::LegalActions {
+            can_fold: true,
+            can_check: true,
+            can_call: false,
+            call_amount: 0,
+            can_bet: true,
+            min_bet: 20,
+            max_bet: 1000,
+            can_raise: false,
+            min_raise: 0,
+            max_raise: 0,
+            can_all_in: true,
+            all_in_cost: 1000,
+        },
+        time_limit_secs: 15,
+    };
+    let json_your_turn = serde_json::to_string(&msg_your_turn).unwrap();
+    assert!(json_your_turn.contains(r#""type":"YourTurn""#));
+    assert!(json_your_turn.contains(r#""time_limit_secs":15"#));
 }

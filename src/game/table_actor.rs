@@ -25,6 +25,8 @@ pub struct CurrentHand {
     pub events: Vec<serde_json::Value>,
 }
 
+pub const DEFAULT_TURN_TIMEOUT_SECS: u64 = 15;
+
 /// Wraps `poker_engine::Table` with connected player tracking, tournament management, and message broadcasting.
 pub struct GameTable {
     pub id: String,
@@ -42,6 +44,8 @@ pub struct GameTable {
     pub prize_pool: u64,
     pub auto_start_epoch: u64,
     pub is_auto_start_scheduled: bool,
+    pub turn_epoch: u64,
+    pub turn_timeout_secs: u64,
 }
 
 impl GameTable {
@@ -70,6 +74,8 @@ impl GameTable {
             prize_pool: 0,
             auto_start_epoch: 0,
             is_auto_start_scheduled: false,
+            turn_epoch: 0,
+            turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
         }
     }
 
@@ -231,12 +237,14 @@ impl GameTable {
             events: Vec::new(),
         });
 
+        self.turn_epoch += 1;
         self.broadcast_events();
         Ok(())
     }
 
     /// Apply a player action and broadcast all resulting events.
     pub fn apply_action(&mut self, action: Action) -> Result<(), String> {
+        self.turn_epoch += 1;
         self.engine.apply_action(action)?;
         self.broadcast_events();
         Ok(())
@@ -286,6 +294,7 @@ impl GameTable {
                     let _ = connected.sender.send(ServerMessage::YourTurn {
                         table_id: self.id.clone(),
                         legal_actions: legal_actions.clone(),
+                        time_limit_secs: self.turn_timeout_secs,
                     });
                 }
             }
@@ -294,7 +303,8 @@ impl GameTable {
             let public_event_json = if let GameEvent::PlayerTurn { player_id, .. } = event {
                 serde_json::json!({
                     "PlayerTurn": {
-                        "player_id": player_id
+                        "player_id": player_id,
+                        "timeout_secs": self.turn_timeout_secs
                     }
                 })
             } else {
@@ -324,6 +334,7 @@ impl GameTable {
     /// Complete current hand, persist history doc to DB, handle tournament eliminations/winner,
     /// and clean up disconnected players.
     fn finish_hand(&mut self) {
+        self.turn_epoch += 1;
         if let Some(mut hand) = self.current_hand.take() {
             for p in &mut hand.starting_players {
                 p.ending_chips = self

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use mongodb::Database;
+use poker_engine::Action;
 use poker_engine::table::TableConfig;
 use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
@@ -176,6 +177,7 @@ impl Lobby {
         }
         drop(table);
 
+        self.check_and_schedule_turn_timer(table_id);
         self.check_and_schedule_auto_start(table_id).await;
 
         Ok(chips)
@@ -187,6 +189,7 @@ impl Lobby {
         let mut results = Vec::new();
         for (table_id, table_lock) in &self.tables {
             let mut table = table_lock.write().await;
+
             if let Some(seat) = table.find_seat_by_user(user_id) {
                 // In tournament mode, if tournament is running, do not remove player stack
                 // (they stay in tournament to be blinded out / auto-fold until eliminated).
@@ -221,6 +224,7 @@ impl Lobby {
         }
 
         for (table_id, _) in &results {
+            self.check_and_schedule_turn_timer(table_id);
             self.check_and_schedule_auto_start(table_id).await;
         }
 
@@ -256,7 +260,12 @@ impl Lobby {
                 .ok_or_else(|| "You must be seated at the table to start a hand".to_string())?;
         }
 
-        table.start_hand()
+        let res = table.start_hand();
+        drop(table);
+        res?;
+
+        self.check_and_schedule_turn_timer(table_id);
+        Ok(())
     }
 
     /// Apply a player action at a table.
@@ -286,17 +295,20 @@ impl Lobby {
         drop(table);
         res?;
 
+        self.check_and_schedule_turn_timer(table_id);
         self.check_and_schedule_auto_start(table_id).await;
         Ok(())
     }
 
     /// Check table conditions and schedule auto-start of the next hand if appropriate.
     pub async fn check_and_schedule_auto_start(&self, table_id: &str) {
-        let table_lock = match self.tables.get(table_id) {
-            Some(t) => t.clone(),
-            None => return,
-        };
+        if let Some(table_lock) = self.tables.get(table_id) {
+            Self::check_and_schedule_auto_start_on_table(table_lock.clone()).await;
+        }
+    }
 
+    /// Check table conditions on an Arc<RwLock<GameTable>> and schedule auto-start.
+    pub async fn check_and_schedule_auto_start_on_table(table_lock: Arc<RwLock<GameTable>>) {
         let mut table = table_lock.write().await;
 
         // Must be in HandEnded stage
@@ -322,7 +334,7 @@ impl Lobby {
         table.is_auto_start_scheduled = true;
         table.auto_start_epoch += 1;
         let epoch = table.auto_start_epoch;
-        let table_id_str = table_id.to_string();
+        let table_id_str = table.id.clone();
 
         // 1.5s for initial table start, 3s between consecutive hands to view showdown/results
         let delay_ms = if table.engine.hand_count == 0 {
@@ -362,9 +374,74 @@ impl Lobby {
                     );
                 } else {
                     log::info!("Auto-started hand for table {}", table_id_str);
+                    Self::check_and_schedule_turn_timer_on_table(table_lock_for_task.clone());
                 }
             }
         });
+    }
+
+    /// Check if a player has an active turn and spawn a timer to auto-fold (or check) if they time out.
+    pub fn check_and_schedule_turn_timer_on_table(table_lock: Arc<RwLock<GameTable>>) {
+        tokio::spawn(async move {
+            let (epoch, timeout_secs, current_seat) = {
+                let table = table_lock.read().await;
+                if table.engine.stage == poker_engine::events::Stage::HandEnded {
+                    return;
+                }
+                match table.engine.current_player {
+                    Some(seat) => (table.turn_epoch, table.turn_timeout_secs, seat),
+                    None => return,
+                }
+            };
+
+            let duration = std::time::Duration::from_secs(timeout_secs);
+            tokio::time::sleep(duration).await;
+
+            let mut table = table_lock.write().await;
+            if table.turn_epoch != epoch
+                || table.engine.stage == poker_engine::events::Stage::HandEnded
+                || table.engine.current_player != Some(current_seat)
+            {
+                return;
+            }
+
+            log::info!(
+                "Decision time limit reached for seat {} on table {}. Auto-acting.",
+                current_seat,
+                table.id
+            );
+
+            let can_check = table
+                .engine
+                .legal_actions(current_seat)
+                .map_or(false, |la| la.can_check);
+            let action = if can_check {
+                Action::Check
+            } else {
+                Action::Fold
+            };
+
+            if let Err(e) = table.apply_action(action) {
+                log::error!(
+                    "Failed to apply auto-timeout action {:?} for seat {} on table {}: {}",
+                    action,
+                    current_seat,
+                    table.id,
+                    e
+                );
+            } else {
+                drop(table);
+                Self::check_and_schedule_turn_timer_on_table(table_lock.clone());
+                Self::check_and_schedule_auto_start_on_table(table_lock.clone()).await;
+            }
+        });
+    }
+
+    /// Check if a player has an active turn and spawn a timer for the given table ID.
+    pub fn check_and_schedule_turn_timer(&self, table_id: &str) {
+        if let Some(table_lock) = self.tables.get(table_id) {
+            Self::check_and_schedule_turn_timer_on_table(table_lock.clone());
+        }
     }
 
     /// Get the table state snapshot for a specific table.

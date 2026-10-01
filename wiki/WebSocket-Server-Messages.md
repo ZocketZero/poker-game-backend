@@ -238,9 +238,12 @@ Broadcast in **Tournament Mode** when only one player remains with chips, conclu
     "max_raise": 1000,
     "can_all_in": true,
     "all_in_cost": 1000
-  }
+  },
+  "time_limit_secs": 15
 }
 ```
+
+- `time_limit_secs`: Total allotted time in seconds for the player to act (default 15s). If the player fails to act within this time limit, they automatically Check (if legal) or Fold.
 
 ---
 
@@ -321,7 +324,8 @@ Broadcast to all seated players at the table whenever an engine event occurs.
   "table_id": "8b51d8b7-...",
   "event": {
     "PlayerTurn": {
-      "player_id": 1
+      "player_id": 1,
+      "timeout_secs": 15
     }
   }
 }

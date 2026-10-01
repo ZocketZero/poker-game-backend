@@ -428,3 +428,74 @@ async fn test_auto_start_next_hand_after_hand_ended() {
         assert_eq!(table.engine.stage, poker_engine::events::Stage::PreFlop);
     }
 }
+
+#[tokio::test]
+async fn test_turn_timer_auto_actions() {
+    let mut lobby = Lobby::new(None);
+    let table_id = lobby
+        .create_table(
+            "admin".to_string(),
+            "Admin".to_string(),
+            TableConfig {
+                small_blind: 10,
+                big_blind: 20,
+                ante: 0,
+                max_players: 6,
+            },
+            GameMode::Cash,
+            None,
+        )
+        .unwrap();
+
+    let (tx1, _rx1) = mpsc::unbounded_channel();
+    let (tx2, _rx2) = mpsc::unbounded_channel();
+
+    // Set a very short turn_timeout_secs (1 second) for fast testing
+    {
+        let table_lock = lobby.get_table(&table_id).unwrap();
+        let mut table = table_lock.write().await;
+        table.turn_timeout_secs = 1;
+    }
+
+    lobby
+        .join_table(
+            &table_id,
+            0,
+            "u1".to_string(),
+            "Alice".to_string(),
+            1000,
+            tx1,
+        )
+        .await
+        .unwrap();
+    lobby
+        .join_table(&table_id, 1, "u2".to_string(), "Bob".to_string(), 1000, tx2)
+        .await
+        .unwrap();
+
+    // Wait for Hand 1 to auto-start (1.5s delay)
+    tokio::time::sleep(std::time::Duration::from_millis(1700)).await;
+
+    // Verify hand has started and current_player is waiting
+    let acting_seat = {
+        let table_lock = lobby.get_table(&table_id).unwrap();
+        let table = table_lock.read().await;
+        assert_eq!(table.engine.stage, poker_engine::events::Stage::PreFlop);
+        table.engine.current_player.expect("Expected acting player")
+    };
+
+    // Wait for the 1.0s turn timer to expire (+ extra margin)
+    tokio::time::sleep(std::time::Duration::from_millis(1300)).await;
+
+    // Verify the turn advanced or action was applied automatically
+    {
+        let table_lock = lobby.get_table(&table_id).unwrap();
+        let table = table_lock.read().await;
+        // Either the turn passed to another player or the hand concluded due to auto-fold
+        assert_ne!(
+            table.engine.current_player,
+            Some(acting_seat),
+            "Acting seat should have changed after timeout auto-action"
+        );
+    }
+}

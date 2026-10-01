@@ -69,9 +69,12 @@ When the server sends `YourTurn`, the payload provides exact boolean flags and b
     "max_raise": 1000,
     "can_all_in": true,
     "all_in_cost": 1000
-  }
+  },
+  "time_limit_secs": 15
 }
 ```
+
+> **Decision Time Limit**: Players are allotted `time_limit_secs` (default 15 seconds) to submit an action. If no valid action is received before this window expires, the server automatically performs a **Check** (if legal) or **Fold**.
 
 ### Action Formulation Rules for LLMs
 
