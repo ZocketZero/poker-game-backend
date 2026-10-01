@@ -60,12 +60,15 @@ pub async fn ws_handler(
             match msg {
                 Message::Text(text) => {
                     let text_str = text.to_string();
+                    // parse client message
                     match serde_json::from_str::<ClientMessage>(&text_str) {
                         Ok(client_msg) => {
+                            // check if handle message return error
                             if let Err(e) =
                                 handle_client_message(&state, &user_id, &username, client_msg, &tx)
                                     .await
                             {
+                                // send error message to client
                                 let _ = tx.send(ServerMessage::Error { message: e });
                             }
                         }
@@ -94,13 +97,12 @@ pub async fn ws_handler(
         let lobby = state.lobby.read().await;
         let refunded = lobby.leave_all_tables(&user_id).await;
         for (_table_id, chips) in refunded {
-            if chips > 0 {
-                if let Ok(Some(user)) =
+            if chips > 0
+                && let Ok(Some(user)) =
                     user_repository::find_user_by_username(&state.db, &username).await
-                {
-                    let new_balance = user.chips.saturating_add(chips);
-                    let _ = user_repository::update_chips(&state.db, &username, new_balance).await;
-                }
+            {
+                let new_balance = user.chips.saturating_add(chips);
+                let _ = user_repository::update_chips(&state.db, &username, new_balance).await;
             }
         }
     });
@@ -204,19 +206,22 @@ async fn handle_client_message(
                 let table_lock = lobby
                     .get_table(&table_id)
                     .ok_or_else(|| format!("Table '{}' not found", table_id))?;
+
                 let table = table_lock.read().await;
-                let required = if table.game_mode == crate::game::messages::GameMode::Tournament {
-                    table.starting_chips
-                } else {
-                    buy_in
-                };
-                (table.game_mode, table.is_started, required)
+                let required_chips =
+                    if table.game_mode == crate::game::messages::GameMode::Tournament {
+                        table.starting_chips
+                    } else {
+                        buy_in
+                    };
+                (table.game_mode, table.is_started, required_chips)
             };
 
             // In tournament mode, late registration is prohibited once the game has begun
             if game_mode == crate::game::messages::GameMode::Tournament && is_started {
                 let is_seated = {
                     let lobby = state.lobby.read().await;
+
                     if let Some(table_lock) = lobby.get_table(&table_id) {
                         let table = table_lock.read().await;
                         table.find_seat_by_user(user_id) == Some(seat)
@@ -282,13 +287,13 @@ async fn handle_client_message(
         ClientMessage::LeaveTable { table_id } => {
             let lobby = state.lobby.read().await;
             let chips = lobby.leave_table(&table_id, user_id).await?;
-            if chips > 0 {
-                if let Ok(Some(user)) =
+            // refund chips 
+            if chips > 0
+                && let Ok(Some(user)) =
                     user_repository::find_user_by_username(&state.db, username).await
-                {
-                    let new_balance = user.chips.saturating_add(chips);
-                    let _ = user_repository::update_chips(&state.db, username, new_balance).await;
-                }
+            {
+                let new_balance = user.chips.saturating_add(chips);
+                let _ = user_repository::update_chips(&state.db, username, new_balance).await;
             }
         }
 

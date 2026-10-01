@@ -120,10 +120,10 @@ impl Lobby {
         let mut table = table_lock.write().await;
 
         // Check if user is already seated at another seat on this table
-        if let Some(existing_seat) = table.find_seat_by_user(&user_id) {
-            if existing_seat != seat {
-                return Err("You are already seated at another seat at this table".to_string());
-            }
+        if let Some(existing_seat) = table.find_seat_by_user(&user_id)
+            && existing_seat != seat
+        {
+            return Err("You are already seated at another seat at this table".to_string());
         }
 
         // Sit the player first to validate seat availability, bounds, and tournament start state
